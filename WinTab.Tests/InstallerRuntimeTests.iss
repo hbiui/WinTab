@@ -1,0 +1,123 @@
+#ifdef Arch
+  #define TestArchitecture Arch
+#else
+  #define TestArchitecture "combined"
+#endif
+
+[Setup]
+AppName=WinTab Installer Runtime Tests
+AppVersion=1.0
+DefaultDirName={tmp}\WinTabInstallerRuntimeTests
+PrivilegesRequired=lowest
+CreateAppDir=no
+Uninstallable=no
+OutputDir={#TestOutputDir}
+OutputBaseFilename=RuntimeTests_{#TestArchitecture}
+
+#include "..\installers\Runtime.iss"
+#include "..\installers\RecycleBin.iss"
+#include "..\installers\Startup.iss"
+
+[Code]
+procedure Check(Condition: Boolean; Message: String);
+begin
+  if not Condition then
+    RaiseException(Message);
+end;
+
+procedure CheckRecycleCleanup(Root: Integer);
+var
+  Page, Shell, Verb, Command, Value: String;
+begin
+  { The cleanup receives a test-owned page, never the real Recycle Bin registration. }
+  Page := 'Software\WinTab.Tests\InstallerRecycle-' + '{#TestArchitecture}';
+  Check(not RegKeyExists(Root, Page), 'The isolated test key must not exist.');
+  Shell := Page + '\shell';
+  Verb := Shell + '\open';
+  Command := Verb + '\command';
+  try
+    RegWriteStringValue(Root, Shell, '', 'open');
+    RegWriteStringValue(Root, Verb, 'WinTab.Owner', 'WinTab.RecycleBinOpen.v1');
+    RegWriteStringValue(Root, Verb, 'WinTab.Command', 'test-command');
+    RegWriteDWordValue(Root, Verb, 'WinTab.HadDefault', 1);
+    RegWriteStringValue(Root, Verb, 'WinTab.Default', 'original-verb');
+    RegWriteDWordValue(Root, Verb, 'WinTab.DefaultKind', 1);
+    RegWriteDWordValue(Root, Verb, 'WinTab.HadPage', 1);
+    RegWriteDWordValue(Root, Verb, 'WinTab.HadShell', 1);
+    RegWriteStringValue(Root, Command, '', 'changed-by-another-app');
+    RegWriteStringValue(Root, Command, 'DelegateExecute', '');
+    RestoreRecycleBinOpenInView(Root, Page);
+    Check(RegQueryStringValue(Root, Command, '', Value) and (Value = 'changed-by-another-app'),
+      'Uninstall must preserve a changed command.');
+    RegWriteStringValue(Root, Command, '', 'test-command');
+    RestoreRecycleBinOpenInView(Root, Page);
+    Check(RegQueryStringValue(Root, Shell, '', Value) and (Value = 'original-verb'),
+      'Uninstall must restore the original default.');
+    Check(not RegKeyExists(Root, Verb), 'Uninstall must remove the owned handler.');
+  finally
+    RegDeleteKeyIncludingSubkeys(Root, Page);
+  end;
+end;
+
+function InitializeSetup: Boolean;
+var
+  ExpectedArchitecture: String;
+  ExpectedHash: String;
+  ResultPath: String;
+  Report: String;
+  AppPath: String;
+begin
+  Result := False;
+  ResultPath := ExpandConstant('{param:ResultFile}');
+  try
+    AppPath := ResultPath + '.old-app.exe';
+    Check(not FileExists(AppPath), 'The startup probe must own its temporary app path');
+    DetectUpdateInstall(AppPath);
+    if ExpandConstant('{param:UPDATE|0}') = '1' then
+      Check(GetAppLaunchParameters('') = '--background', 'An in-app update must resume in the tray')
+    else
+      Check(GetAppLaunchParameters('') = '', 'A first install must still open the main window');
+    Check(SaveStringToFile(AppPath, 'old version', False), 'Could not prepare the manual upgrade probe');
+    DetectUpdateInstall(AppPath);
+    Check(GetAppLaunchParameters('') = '--background', 'A manual upgrade must resume in the tray');
+    CheckRecycleCleanup(HKCU32);
+    if IsWin64 then CheckRecycleCleanup(HKCU64);
+#ifdef Arch
+    ExpectedArchitecture := '{#Arch}';
+#else
+    if ProcessorArchitecture = paARM64 then
+      ExpectedArchitecture := 'arm64'
+    else if ProcessorArchitecture = paX64 then
+      ExpectedArchitecture := 'x64'
+    else
+      ExpectedArchitecture := 'x86';
+#endif
+    if ExpectedArchitecture = 'x86' then
+      ExpectedHash := '31AB52DCF6440AE1BAC553B21AD97FD88F2F2354DF71B19946F90FDE426595BA'
+    else if ExpectedArchitecture = 'arm64' then
+      ExpectedHash := '03CAB3CB3006E0C089CC716EF27FBEC7E8EA8D7C873D99F4DD397BEE64CC7412'
+    else
+      ExpectedHash := '4BEE05AA0637468A19CD82490858FC69E93FCE8D22C0AEB272A76B71F0DC93E9';
+
+    Check(GetArchitectureString = ExpectedArchitecture, 'Runtime architecture must match the selected installer.');
+    Check(GetDotNet9Url('') = 'https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/9.0.19/windowsdesktop-runtime-9.0.19-win-' + ExpectedArchitecture + '.exe', 'Runtime URL must select the official matching installer.');
+    Check(GetDotNet9Filename = 'dotnet9-' + ExpectedArchitecture + '.exe', 'Downloaded files must retain their architecture.');
+    Check(CompareText(GetDotNet9Hash, ExpectedHash) = 0, 'The download must require the verified runtime checksum.');
+    Check(IsSupportedDesktopRuntimeVersion('9.0.3'), 'An installed .NET 9 desktop runtime should be accepted.');
+    Check(IsSupportedDesktopRuntimeVersion('9.0.19'), 'Newer .NET 9 patches should be accepted.');
+    Check(not IsSupportedDesktopRuntimeVersion('9.0.19-preview.1'), 'Preview runtimes must not satisfy a stable requirement.');
+    Check(not IsSupportedDesktopRuntimeVersion('9.0.bad'), 'Malformed runtime versions must be rejected.');
+    Check(not IsSupportedDesktopRuntimeVersion('9.0.-1'), 'Negative runtime patches must be rejected.');
+    Check(not IsSupportedDesktopRuntimeVersion('9.0.19.1'), 'An extra version component must be rejected.');
+    Check(not IsSupportedDesktopRuntimeVersion('8.0.19'), 'An older major runtime must not satisfy .NET 9.');
+    Check(not IsSupportedDesktopRuntimeVersion('10.0.0'), 'A different major runtime must not satisfy .NET 9.');
+    Check(IsSuccessfulRuntimeExitCode(0), 'A completed installation should succeed.');
+    Check(IsSuccessfulRuntimeExitCode(3010), 'A successful installation requiring restart should succeed.');
+    Check(not IsSuccessfulRuntimeExitCode(1603), 'A failed runtime installation must not report success.');
+    Report := 'PASS';
+  except
+    Report := 'FAIL: ' + GetExceptionMessage;
+  end;
+  if not SaveStringToFile(ResultPath, Report, False) then
+    RaiseException('Could not write the installer self-test result.');
+end;

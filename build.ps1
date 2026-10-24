@@ -1,0 +1,315 @@
+#requires -Version 5.1
+<#
+.SYNOPSIS
+    Publish WinTab for x64/x86/arm64 and compile per-arch Inno Setup installers.
+
+.PARAMETER Version
+    Version string used in the installer filename, e.g. "v1.0.0".
+    Defaults to the <Version> in WinTab/WinTab.csproj prefixed with "v".
+
+.PARAMETER Arch
+    Architectures to build. Defaults to x64, x86, arm64.
+
+.PARAMETER SkipPublish
+    Skip the dotnet publish step (use existing publish output).
+
+.PARAMETER SkipInstaller
+    Skip the Inno Setup compile step.
+
+.PARAMETER SkipTests
+    Skip the .NET, frontend, Go bridge and installer tests.
+
+.PARAMETER Combined
+    Also build the combined (auto-detect) installer in addition to per-arch installers.
+
+.PARAMETER IsccPath
+    Path to ISCC.exe. Auto-detected if not provided.
+
+.EXAMPLE
+    .\build.ps1
+    .\build.ps1 -Version v1.1.0
+    .\build.ps1 -Arch x64
+#>
+[CmdletBinding()]
+param(
+    [string]$Version,
+    [ValidateSet('x64', 'x86', 'arm64')]
+    [string[]]$Arch = @('x64', 'x86', 'arm64'),
+    [switch]$SkipPublish,
+    [switch]$SkipInstaller,
+    [switch]$SkipTests,
+    [switch]$Combined,
+    [string]$IsccPath,
+    [string]$MSBuildPath
+)
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$utf8 = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
+
+$RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectPath = Join-Path $RepoRoot 'WinTab\WinTab.csproj'
+$SolutionPath = Join-Path $RepoRoot 'WinTab.sln'
+$TestProjectPath = Join-Path $RepoRoot 'WinTab.Tests\WinTab.Tests.csproj'
+$TestExePath = Join-Path $RepoRoot 'WinTab.Tests\bin\Release\net9.0-windows\WinTab.Tests.exe'
+$AssetsDir = Join-Path $RepoRoot 'Assets'
+$AppIconPath = Join-Path $RepoRoot 'WinTab\Icon.ico'
+$AppLogoPath = Join-Path $RepoRoot 'WinTab\wintab-logo.png'
+$PublishRoot = Join-Path $RepoRoot 'publish\net9.0-windows'
+$DistDir = Join-Path $RepoRoot 'dist'
+$InstallerScript = Join-Path $RepoRoot 'installers\installer.iss'
+
+if (-not $Version) {
+    [xml]$csproj = Get-Content -Path $ProjectPath
+    $rawVersion = $csproj.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+    if (-not $rawVersion) { throw "Could not read <Version> from $ProjectPath" }
+    $Version = "v$rawVersion"
+}
+
+Write-Host "==> WinTab build" -ForegroundColor Cyan
+Write-Host "    Version    : $Version"
+Write-Host "    Arch       : $($Arch -join ', ')"
+Write-Host "    PublishRoot: $PublishRoot"
+Write-Host "    DistDir    : $DistDir"
+
+function Resolve-Iscc {
+    param([string]$Hint)
+    if ($Hint) {
+        if (Test-Path $Hint) { return $Hint }
+        throw "ISCC.exe not found at: $Hint"
+    }
+    $cmd = Get-Command -Name 'ISCC.exe' -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $candidates = @(
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    if ($candidates) { return $candidates }
+    throw "Inno Setup 6 not found. Install it or pass -IsccPath."
+}
+
+function Resolve-MSBuild {
+    param([string]$Hint)
+    if ($Hint) {
+        if (Test-Path $Hint) { return $Hint }
+        throw "MSBuild.exe not found at: $Hint"
+    }
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        # Try standard channel first, then prerelease/insiders.
+        $msb = & $vswhere -latest -products * -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+        if (-not $msb) {
+            $msb = & $vswhere -latest -prerelease -products * -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+        }
+        if ($msb -and (Test-Path $msb)) { return $msb }
+    }
+    $cmd = Get-Command -Name 'MSBuild.exe' -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    throw "MSBuild.exe not found. Install Visual Studio with the '.NET desktop development' workload or pass -MSBuildPath."
+}
+
+function ConvertTo-Ico {
+    param(
+        [string]$AssetsPath,
+        [string]$DestinationPath
+    )
+
+    $sizes = @(16, 20, 24, 32, 48, 64, 128, 256)
+    $images = foreach ($size in $sizes) {
+        $path = Join-Path $AssetsPath "$($size)x$($size).png"
+        if (-not (Test-Path $path)) { throw "Missing icon asset: $path" }
+        [pscustomobject]@{
+            Size = $size
+            Bytes = [System.IO.File]::ReadAllBytes($path)
+        }
+    }
+
+    $stream = [System.IO.File]::Open($DestinationPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+    try {
+        $writer = [System.IO.BinaryWriter]::new($stream)
+        try {
+            $writer.Write([uint16]0)
+            $writer.Write([uint16]1)
+            $writer.Write([uint16]$images.Count)
+
+            $offset = 6 + ($images.Count * 16)
+            foreach ($image in $images) {
+                $directorySize = if ($image.Size -eq 256) { 0 } else { $image.Size }
+                $writer.Write([byte]$directorySize)
+                $writer.Write([byte]$directorySize)
+                $writer.Write([byte]0)
+                $writer.Write([byte]0)
+                $writer.Write([uint16]1)
+                $writer.Write([uint16]32)
+                $writer.Write([uint32]$image.Bytes.Length)
+                $writer.Write([uint32]$offset)
+                $offset += $image.Bytes.Length
+            }
+
+            foreach ($image in $images) {
+                $writer.Write($image.Bytes)
+            }
+        }
+        finally {
+            $writer.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+function Test-InstallerRuntime {
+    param([string]$CompilerPath)
+
+    $temporaryRoot = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot '_temp'))
+    $testDirectory = Join-Path $temporaryRoot ('installer-tests-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
+    try {
+        foreach ($architecture in @('x64', 'x86', 'arm64', 'combined')) {
+            $compilerArguments = @('/Q', "/DTestOutputDir=$testDirectory")
+            if ($architecture -ne 'combined') { $compilerArguments += "/DArch=$architecture" }
+            $compilerArguments += (Join-Path $RepoRoot 'WinTab.Tests\InstallerRuntimeTests.iss')
+            & $CompilerPath @compilerArguments
+            if ($LASTEXITCODE -ne 0) { throw "Installer self-test compile failed for $architecture (exit $LASTEXITCODE)" }
+
+            $reportPath = Join-Path $testDirectory "$architecture-result.txt"
+            $testExe = Join-Path $testDirectory "RuntimeTests_$architecture.exe"
+            $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ResultFile="' + $reportPath + '"'
+            $process = Start-Process -FilePath $testExe -ArgumentList $arguments -WindowStyle Hidden -PassThru -Wait
+            if (-not (Test-Path -LiteralPath $reportPath)) {
+                throw "Installer self-test did not produce a result for $architecture"
+            }
+            $report = Get-Content -LiteralPath $reportPath -Encoding UTF8 -Raw
+            if ($report -ne 'PASS' -or $process.ExitCode -ne 1) {
+                throw "Installer self-test failed for $architecture (exit $($process.ExitCode)): $report"
+            }
+            Write-Host "    PASS installer runtime selection and validation: $architecture"
+        }
+    }
+    finally {
+        $resolvedDirectory = [System.IO.Path]::GetFullPath($testDirectory)
+        if (-not $resolvedDirectory.StartsWith($temporaryRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to clean a test directory outside $temporaryRoot"
+        }
+        try {
+            Add-Type -AssemblyName Microsoft.VisualBasic
+            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
+                $resolvedDirectory,
+                [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+                [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
+        }
+        catch {
+            # The shell may report an error after successful recycling. Preserve any remaining
+            # files and report them; a recycle failure never authorizes permanent deletion.
+            if (Test-Path -LiteralPath $resolvedDirectory) {
+                Write-Warning "Installer test files could not be recycled and were retained at ${resolvedDirectory}: $_"
+            }
+        }
+    }
+}
+
+Write-Host "`n==> Preparing app assets" -ForegroundColor Cyan
+ConvertTo-Ico -AssetsPath $AssetsDir -DestinationPath $AppIconPath
+$sourceLogo = Join-Path $AssetsDir 'logo.png'
+if (Test-Path $sourceLogo) {
+    Copy-Item -Path $sourceLogo -Destination $AppLogoPath -Force
+}
+
+if (-not $SkipPublish) {
+    $msbuild = Resolve-MSBuild -Hint $MSBuildPath
+
+    if (-not $SkipTests) {
+        Write-Host "`n==> Building and running unit tests" -ForegroundColor Cyan
+        & $msbuild $SolutionPath /restore /t:Build /p:Configuration=Release /nologo /v:minimal
+        if ($LASTEXITCODE -ne 0) { throw "Test project build failed (exit $LASTEXITCODE)" }
+        & $TestExePath
+        if ($LASTEXITCODE -ne 0) { throw "Unit tests failed (exit $LASTEXITCODE)" }
+    }
+    else {
+        Write-Host "`n==> SkipTests: not running unit tests" -ForegroundColor Yellow
+    }
+
+    Write-Host "`n==> Publishing $($Arch.Count) arch(es) via $msbuild" -ForegroundColor Cyan
+    foreach ($a in $Arch) {
+        $out = Join-Path $PublishRoot $a
+        Write-Host "    - win-$a -> $out"
+        if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
+        & $msbuild $ProjectPath `
+            /restore `
+            /t:Publish `
+            /p:Configuration=Release `
+            /p:TargetFramework=net9.0-windows `
+            /p:RuntimeIdentifier="win-$a" `
+            /p:SelfContained=false `
+            /p:PublishDir="$out" `
+            /p:DebugType=none `
+            /nologo `
+            /v:minimal
+        if ($LASTEXITCODE -ne 0) { throw "MSBuild publish failed for win-$a (exit $LASTEXITCODE)" }
+    }
+
+    # The 32-bit build keeps WPF; supported MyGo architectures ship a separate renderer
+    # beside the resident executable so closing settings does not stop Explorer hooks.
+    $desktopArchitectures = @($Arch | Where-Object { $_ -ne 'x86' })
+    if ($desktopArchitectures.Count -gt 0) {
+        & (Join-Path $RepoRoot 'WinTab.Desktop/build.ps1') -Arch $desktopArchitectures -Version $Version -PublishRoot $PublishRoot -SkipTests:$SkipTests
+    }
+}
+else {
+    Write-Host "`n==> SkipPublish: using existing publish output" -ForegroundColor Yellow
+}
+
+if ($SkipInstaller) {
+    Write-Host "`n==> SkipInstaller: stopping after publish" -ForegroundColor Yellow
+    return
+}
+
+$iscc = Resolve-Iscc -Hint $IsccPath
+if (-not $SkipTests) {
+    Write-Host "`n==> Testing installer runtime selection and validation" -ForegroundColor Cyan
+    Test-InstallerRuntime -CompilerPath $iscc
+}
+Write-Host "`n==> Compiling installers with $iscc" -ForegroundColor Cyan
+
+if (-not (Test-Path $DistDir)) { New-Item -ItemType Directory -Path $DistDir | Out-Null }
+
+foreach ($a in $Arch) {
+    $publishArchDir = Join-Path $PublishRoot $a
+    if (-not (Test-Path (Join-Path $publishArchDir 'WinTab.exe'))) {
+        throw "Missing publish output for $a at $publishArchDir. Run without -SkipPublish first."
+    }
+    if ($a -ne 'x86' -and -not (Test-Path (Join-Path $publishArchDir 'WinTab.UI.exe'))) {
+        throw "Missing settings renderer for $a. Run without -SkipPublish first."
+    }
+    Write-Host "    - $a installer"
+    & $iscc `
+        "/DMyAppVersion=$Version" `
+        "/DPublishRoot=..\publish\net9.0-windows" `
+        "/DOutputDir=..\dist" `
+        "/DArch=$a" `
+        $InstallerScript | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ISCC failed for $a (exit $LASTEXITCODE)" }
+}
+
+if ($Combined) {
+    Write-Host "    - combined installer"
+    & $iscc `
+        "/DMyAppVersion=$Version" `
+        "/DPublishRoot=..\publish\net9.0-windows" `
+        "/DOutputDir=..\dist" `
+        $InstallerScript | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ISCC failed for combined installer (exit $LASTEXITCODE)" }
+}
+
+Write-Host "`n==> Done. Artifacts:" -ForegroundColor Green
+Get-ChildItem -Path $DistDir -Filter "WinTab_${Version}*_Setup.exe" |
+    Sort-Object Name |
+    ForEach-Object {
+        $sizeMb = '{0:N2}' -f ($_.Length / 1MB)
+        Write-Host ("    {0,-40} {1,8} MB" -f $_.Name, $sizeMb)
+    }

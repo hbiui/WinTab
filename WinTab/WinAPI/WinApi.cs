@@ -1,0 +1,284 @@
+// ReSharper disable IdentifierTypo
+// ReSharper disable InconsistentNaming
+
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Runtime.InteropServices;
+
+namespace WinTab.WinAPI;
+
+public static class WinApi
+{
+    public const int EVENT_SYSTEM_FOREGROUND = 0x0003;
+    public const int EVENT_OBJECT_CREATE = 0x8000;
+    public const int EVENT_OBJECT_DESTROY = 0x8001;
+    public const int EVENT_OBJECT_FOCUS = 0x8005;
+    public const int EVENT_OBJECT_SELECTION = 0x8006;
+    public const int EVENT_OBJECT_SHOW = 0x8002;
+    public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+    public const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
+
+    public const uint WM_NULL = 0x0000; // Answered by every window without side effects; shows whether its thread is pumping messages
+    public const uint WM_QUIT = 0x0012;
+    public const uint WM_CLOSE = 0x0010;
+    public const int WM_COMMAND = 0x111; // Send a command
+    public const uint WM_KEYDOWN = 0x0100;
+    public const uint WM_SYSKEYDOWN = 0x0104;
+    public const uint WM_MOUSEMOVE = 0x0200;
+    public const uint WM_LBUTTONDOWN = 0x0201;
+    public const uint WM_RBUTTONDOWN = 0x0204;
+    public const uint WM_MBUTTONDOWN = 0x0207;
+    public const uint WM_MBUTTONUP = 0x0208;
+    public const uint WM_MOUSEWHEEL = 0x020A;
+    public const uint WM_XBUTTONDOWN = 0x020B;
+    public const uint WM_MOUSEHWHEEL = 0x020E;
+    public const uint PM_NOREMOVE = 0x0000;
+
+    public const int WH_KEYBOARD_LL = 13;
+    public const int WH_MOUSE_LL = 14;
+
+    public const uint LLMHF_INJECTED = 0x0001;
+    public const uint LLKHF_INJECTED = 0x0010;
+
+    public const int SM_CXSMICON = 49;
+    public const int SM_CXDRAG = 68;
+    public const int SM_CYDRAG = 69;
+
+    public const int VK_SHIFT = 0x10;
+    public const int VK_CONTROL = 0x11;
+    public const int VK_MENU = 0x12;
+    public const int VK_LWIN = 0x5B;
+    public const int VK_RWIN = 0x5C;
+
+    public const int SW_SHOWNOACTIVATE = 4; // Show window but not activated
+    public const int SW_HIDE = 0;
+
+    public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOZORDER = 0x0004;
+    public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_FRAMECHANGED = 0x0020;
+    public const uint SWP_SHOWWINDOW = 0x0040;
+    public const uint SWP_HIDEWINDOW = 0x0080;
+    public const uint SWP_ASYNCWINDOWPOS = 0x4000;
+
+    public const int GWL_EXSTYLE = -20; // Extended window style.
+    public const int WS_EX_LAYERED = 0x80000; // Layered window.
+    public const int LWA_ALPHA = 0x2; // Determine the opacity of a layered window
+
+    public const uint GA_ROOT = 2;
+    public const uint GA_ROOTOWNER = 3;
+
+    public const uint SIGDN_URL = 0x80068000;
+
+    [DllImport("user32.dll")]
+    public static extern nint SetWinEventHook(uint eventMin, uint eventMax, nint hModWinEventProc, WinEventDelegate lPfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnhookWinEvent(nint hWinEventHook);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    public static extern bool PostThreadMessage(uint idThread, uint msg, nint wParam, nint lParam);
+
+    [DllImport("user32.dll")]
+    public static extern int GetMessage(out MSG lpMsg, nint hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll")]
+    public static extern bool PeekMessage(out MSG lpMsg, nint hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
+
+    [DllImport("user32.dll")]
+    public static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern nint DispatchMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern nint GetParent(nint hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern nint FindWindow(string lpClassName, string? lpWindowName);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern nint FindWindowEx(nint parentHandle, nint childAfter, string className, string? windowTitle);
+
+    [DllImport("user32.dll", ExactSpelling = true, EntryPoint = "MapVirtualKeyW")]
+    public static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+    [DllImport("user32.dll", ExactSpelling = true)]
+    public static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]
+    public static extern uint SendInput(uint nInputs, [MarshalAs(UnmanagedType.LPArray), In] INPUT[] pInputs, int cbSize);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(nint handle, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindowAsync(nint handle, int command);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool SetProp(nint handle, string name, nint value);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern nint GetProp(nint handle, string name);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern nint RemoveProp(nint handle, string name);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint SendMessageTimeout(nint handle, uint message, nint parameter, nint argument,
+        uint flags, uint timeout, out nint result);
+
+    public static bool TrySendMessage(nint handle, uint message, nint parameter, nint argument, uint timeoutMs = 200) =>
+        handle != 0 && SendMessageTimeout(handle, message, parameter, argument, 0x0002 | 0x0020, timeoutMs, out _) != 0;
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(nint hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsIconic(nint handle);
+
+    [DllImport("user32.dll")]
+    public static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern nint WindowFromPoint(Point point);
+
+    [DllImport("user32.dll")]
+    public static extern nint GetAncestor(nint hWnd, uint gaFlags);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetDoubleClickTime();
+
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int nIndex);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(nint hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(int X, int Y);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetCursorPos(out Point point);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetForegroundWindow(nint hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(nint hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern int GetWindowLong(nint hWnd, int nIndex);
+
+    [DllImport("user32.dll")]
+    public static extern int SetWindowLong(nint hWnd, int nIndex, int dwNewLong);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetLayeredWindowAttributes(nint hWnd, uint crKey, byte bAlpha, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetLayeredWindowAttributes(nint hWnd, out uint crKey, out byte bAlpha, out uint dwFlags);
+
+    [DllImport("user32.dll")]
+    public static extern uint RealGetWindowClass(nint hwnd, StringBuilder pszType, uint cchType);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetWindowText(nint hWnd, StringBuilder lpString, int nMaxCount);
+
+    /// <summary>The window's title as last set by its owner; for another process's window nothing is sent to it.</summary>
+    public static string GetWindowText(nint hWnd, int maxLength = 512)
+    {
+        if (hWnd == 0) return string.Empty;
+        var text = new StringBuilder(maxLength + 1);
+        var length = GetWindowText(hWnd, text, text.Capacity);
+        return length > 0 ? text.ToString(0, length) : string.Empty;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern nint SendMessage(nint hWnd, uint Msg, nint wParam, nint lParam);
+
+    [return: MarshalAs(UnmanagedType.Bool)]
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern bool PostMessage(nint hWnd, uint Msg, nint wParam, nint lParam);
+    
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(nint hWnd, out uint lpdwProcessId);
+    
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern nint OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+    
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(nint hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    private static extern bool QueryFullProcessImageName(nint hProcess, uint dwFlags, StringBuilder lpExeName, ref int lpdwSize);
+    
+    [DllImport("shell32.dll", SetLastError = true)]
+    public static extern int SHOpenFolderAndSelectItems(nint pidlFolder, uint cIdl, [In, MarshalAs(UnmanagedType.LPArray)] nint[] apidl, uint dwFlags);
+
+    [DllImport("shell32.dll")]
+    public static extern int SHGetDesktopFolder(out nint ppshf);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern int SHGetNameFromIDList(nint pidl, uint sigdnName, [MarshalAs(UnmanagedType.LPWStr)] out string? ppszName);
+
+    [DllImport("oleacc.dll")]
+    public static extern nint AccessibleObjectFromPoint(Point pt, [Out, MarshalAs(UnmanagedType.Interface)] out object accObj, [Out] out object ChildID);
+
+    public static IEnumerable<nint> FindAllWindowsEx(string className, nint parent = 0, string? windowTitle = null)
+    {
+        nint handle = 0;
+        do
+        {
+            handle = FindWindowEx(parent, handle, className, windowTitle);
+
+            if (handle == 0) continue;
+
+            yield return handle;
+
+        } while (handle != 0);
+    }
+
+    public static string GetWindowClassName(nint hWnd, int maxClassNameLength = 254)
+    {
+        if (hWnd == 0) return string.Empty;
+
+        var className = new StringBuilder(maxClassNameLength + 1);
+        RealGetWindowClass(hWnd, className, (uint)className.Capacity);
+
+        return className.ToString();
+    }
+    public static bool IsWindowHasClassName(nint hWnd, string className, StringComparison comparison = StringComparison.OrdinalIgnoreCase)
+    {
+        // One character more than expected, so a longer class that only starts with the name does not match.
+        var currentClassName = GetWindowClassName(hWnd, className.Length + 1);
+
+        return string.Equals(currentClassName, className, comparison);
+    }
+    
+    public static string? GetProcessPath(int pid)
+    {
+        const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        var procHandle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
+        if (procHandle == 0) return null;
+        
+        try
+        {
+            var capacity = 260;
+            var sb = new StringBuilder(capacity);
+            return QueryFullProcessImageName(procHandle, 0, sb, ref capacity) ? sb.ToString() : null;
+        }
+        finally
+        {
+            CloseHandle(procHandle);
+        }
+    }
+}

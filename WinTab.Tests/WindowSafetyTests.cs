@@ -1,0 +1,350 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using WinTab.Helpers;
+using WinTab.Hooks;
+using WinTab.WinAPI;
+
+internal static class WindowSafetyTests
+{
+    public static IEnumerable<(string Name, Func<Task> Body)> All()
+    {
+        yield return ("window identities reject an old registration on the same thread and handle", RejectsOldIdentity);
+        yield return ("window commands time out without waiting for an unresponsive window", WindowCommandsAreBounded);
+        yield return ("completed merges cannot perform late window operations", DisposedMergeCannotAct);
+        yield return ("merge generations and deadlines invalidate pending work", MergeLifetimeIsBounded);
+        yield return ("window recovery restores only the opacity it changed", RecoveryPreservesOpacity);
+        yield return ("window recovery preserves taskbar styles and unrelated later changes", RecoveryPreservesTaskbarStyles);
+        yield return ("window recovery can read legacy opacity-only recovery records", RecoveryReadsLegacySnapshot);
+        yield return ("window recovery rejects a replacement with the same handle", RecoveryRejectsReplacement);
+        yield return ("window recovery survives the hiding process exiting", () => RecoverySurvivesProcessExit(false, false));
+        yield return ("window recovery preserves original opacity across process exits", () => RecoverySurvivesProcessExit(true, false));
+        yield return ("hiding again after restart preserves the original recovery record", () => RecoverySurvivesProcessExit(true, true));
+        yield return ("window recovery leaves unowned transparent windows unchanged", RecoveryLeavesUnownedWindowAlone);
+        yield return ("window class checks reject a longer class that shares the expected prefix", ClassCheckRejectsLongerClass);
+        yield return ("bulk recovery restores responsive windows while another native thread is blocked", BulkRecoverySurvivesBlockedWindow);
+    }
+
+    private static async Task BulkRecoverySurvivesBlockedWindow()
+    {
+        using var first = new RemoteExplorerFrame(visible: false);
+        using var second = new RemoteExplorerFrame(visible: false);
+        var firstIdentity = WindowIdentity.Capture(first.Handle);
+        var secondIdentity = WindowIdentity.Capture(second.Handle);
+        await BackgroundWindowVisibility.Hide(firstIdentity, _ => true);
+        await BackgroundWindowVisibility.Hide(secondIdentity, _ => true);
+        await first.BlockMessagesAsync(2_000);
+        var recovery = Task.Run(() => ExplorerWindowVisibility.RestoreAll([first.Handle, second.Handle]));
+        try
+        {
+            await Task.WhenAny(recovery, Task.Delay(1_200));
+            Check.That(recovery.IsCompleted, "Bulk recovery must not wait indefinitely for one native window thread.");
+            Check.That((TestWindowOpacity.Instance.ReadStyle(second.Handle) & WinApi.WS_EX_LAYERED) == 0,
+                "Responsive windows must regain opacity before the blocked window starts answering.");
+        }
+        finally
+        {
+            await recovery;
+            BackgroundWindowVisibility.Restore(firstIdentity, true, _ => true);
+            BackgroundWindowVisibility.Restore(secondIdentity, true, _ => true);
+        }
+    }
+
+    private static async Task ClassCheckRejectsLongerClass()
+    {
+        using var scheduler = new StaTaskScheduler();
+        await Task.Factory.StartNew(() =>
+        {
+            var handle = CreateTestWindow();
+            try
+            {
+                Check.That(WinApi.IsWindowHasClassName(handle, "static"), "The exact class must match regardless of case.");
+                Check.That(!WinApi.IsWindowHasClassName(handle, "Stat"),
+                    "A class whose name only starts with the expected one must not be mistaken for it.");
+            }
+            finally
+            {
+                DestroyWindow(handle);
+            }
+        }, CancellationToken.None, TaskCreationOptions.None, scheduler);
+    }
+
+    private static async Task RejectsOldIdentity()
+    {
+        using var scheduler = new StaTaskScheduler();
+        await Task.Factory.StartNew(() =>
+        {
+            var handle = CreateTestWindow();
+            try
+            {
+                var original = WindowIdentity.Capture(handle);
+                Check.That(original.IsCurrent, "The original registration must be valid.");
+                original.Release();
+                var replacement = WindowIdentity.Capture(handle);
+                Check.That(replacement.IsCurrent && !original.IsCurrent,
+                    "A new registration must invalidate the old token, even with unchanged process and thread IDs.");
+                replacement.Release();
+            }
+            finally
+            {
+                DestroyWindow(handle);
+            }
+        }, CancellationToken.None, TaskCreationOptions.None, scheduler);
+    }
+
+    private static async Task WindowCommandsAreBounded()
+    {
+        using var scheduler = new StaTaskScheduler();
+        var handle = await Task.Factory.StartNew(CreateTestWindow, CancellationToken.None, TaskCreationOptions.None, scheduler);
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var blocked = Task.Factory.StartNew(() =>
+        {
+            started.Set();
+            WaitForSingleObject(release.WaitHandle.SafeWaitHandle.DangerousGetHandle(), 5_000);
+        }, CancellationToken.None, TaskCreationOptions.None, scheduler);
+        try
+        {
+            Check.That(started.Wait(2_000), "The test window thread must be blocked.");
+            var timer = Stopwatch.StartNew();
+            Check.That(!WinApi.TrySendMessage(handle, WinApi.WM_COMMAND, 0, 0),
+                "An unresponsive window must be reported as a failed command.");
+            Check.That(timer.ElapsedMilliseconds < 800, "The native command must honor its 200 ms timeout.");
+        }
+        finally
+        {
+            release.Set();
+            await blocked;
+            await Task.Factory.StartNew(() => DestroyWindow(handle), CancellationToken.None, TaskCreationOptions.None, scheduler);
+        }
+    }
+
+    private static Task RecoveryPreservesOpacity() => WithVisibilityWindow(handle =>
+    {
+        BackgroundWindowVisibility.UpdateLayeredStyle(handle, remove: false);
+        Check.That(TestWindowOpacity.Instance.TryWrite(handle, 0, 128, WinApi.LWA_ALPHA), "Set up the original opacity.");
+        var identity = WindowIdentity.Capture(handle);
+        BackgroundWindowVisibility.Hide(identity);
+        BackgroundWindowVisibility.Hide(identity);
+        Check.That(TestWindowOpacity.Instance.TryRead(handle, out _, out var hiddenAlpha, out _) && hiddenAlpha == 0,
+            "A merge must conceal its own source window.");
+        Check.That(BackgroundWindowVisibility.Restore(identity), "The owned source must be restored.");
+        Check.That(TestWindowOpacity.Instance.TryRead(handle, out _, out var restoredAlpha, out _) && restoredAlpha == 128,
+            "Recovery must preserve the original opacity rather than remove unrelated window styling.");
+        Check.That(!WinApi.IsWindowVisible(handle), "Recovery must not show a window that was already hidden.");
+        Check.That(!ExplorerWindowVisibility.Contains(handle), "Successful recovery must release its tracking entry.");
+    });
+
+    private static async Task RecoveryPreservesTaskbarStyles()
+    {
+        foreach (var original in new[] { 0, 0x80, 0x40000, 0x40080 })
+            await WithVisibilityWindowAsync(async handle =>
+            {
+                TestWindowOpacity.Instance.WriteStyle(handle, original);
+                var identity = WindowIdentity.Capture(handle);
+                await BackgroundWindowVisibility.Hide(identity, _ => true);
+                Check.Equal(0x80, TestWindowOpacity.Instance.ReadStyle(handle) & WindowVisibilitySnapshot.TaskbarStyleMask,
+                    "A concealed window must be excluded even when taskbar COM is a no-op.");
+                TestWindowOpacity.Instance.WriteStyle(handle, TestWindowOpacity.Instance.ReadStyle(handle) | 0x200);
+                Check.That(BackgroundWindowVisibility.Restore(identity, true, _ => true), "Restore the owned styles.");
+                var restored = TestWindowOpacity.Instance.ReadStyle(handle);
+                Check.Equal(original, restored & WindowVisibilitySnapshot.TaskbarStyleMask, "Both original taskbar style bits must return.");
+                Check.That((restored & 0x200) != 0, "Recovery must not replace unrelated style changes made while concealed.");
+            });
+    }
+
+    private static Task RecoveryReadsLegacySnapshot() => WithVisibilityWindow(handle =>
+    {
+        TestWindowOpacity.Instance.WriteStyle(handle, 0x40000);
+        var snapshot = WindowVisibilitySnapshot.Capture(handle, TestWindowOpacity.Instance)!;
+        Check.That(snapshot.Save(handle), "Create the old ownership record.");
+        WinApi.RemoveProp(handle, "WinTab.HiddenWindow.TaskbarStyle.v1");
+        BackgroundWindowVisibility.UpdateLayeredStyle(handle, remove: false);
+        TestWindowOpacity.Instance.TryWrite(handle, 0, 0, WinApi.LWA_ALPHA);
+        BackgroundWindowVisibility.Hide(handle);
+        Check.That(BackgroundWindowVisibility.Restore(handle), "An opacity-only record must still be recoverable after another hide.");
+        Check.Equal(0x40000, TestWindowOpacity.Instance.ReadStyle(handle) & WindowVisibilitySnapshot.TaskbarStyleMask,
+            "Upgrading the recovery record must retain the original taskbar style.");
+    });
+
+    private static Task RecoveryRejectsReplacement() => WithVisibilityWindow(handle =>
+    {
+        var original = WindowIdentity.Capture(handle);
+        BackgroundWindowVisibility.Hide(original);
+        original.Release();
+        var replacement = WindowIdentity.Capture(handle);
+        Check.That(TestWindowOpacity.Instance.TryWrite(handle, 0, 192, WinApi.LWA_ALPHA), "Set up replacement opacity.");
+        Check.That(!BackgroundWindowVisibility.Restore(original), "A stale registration must not restore another window.");
+        Check.That(TestWindowOpacity.Instance.TryRead(handle, out _, out var alpha, out _) && alpha == 192,
+            "A replacement window must keep its own opacity.");
+        replacement.Release();
+    });
+
+    public static int ConcealRecoveryWindow(string handleText, string processIdText)
+    {
+        var handle = (nint)long.Parse(handleText, CultureInfo.InvariantCulture);
+        var expectedProcessId = uint.Parse(processIdText, CultureInfo.InvariantCulture);
+        WinApi.GetWindowThreadProcessId(handle, out var processId);
+        if (processId != expectedProcessId || !WinApi.IsWindowHasClassName(handle, "STATIC") ||
+            WinApi.IsWindowVisible(handle))
+            return 1;
+        BackgroundWindowVisibility.Hide(handle);
+        return TestWindowOpacity.Instance.TryRead(handle, out _, out var alpha, out _) && alpha == 0 ? 0 : 1;
+    }
+
+    private static Task RecoverySurvivesProcessExit(bool wasLayered, bool concealAgain) => WithVisibilityWindowAsync(async handle =>
+    {
+        const uint originalColorKey = 0x563412;
+        const byte originalAlpha = 137;
+        const uint originalFlags = 3;
+        TestWindowOpacity.Instance.WriteStyle(handle, 0x40000);
+        if (wasLayered)
+        {
+            BackgroundWindowVisibility.UpdateLayeredStyle(handle, remove: false);
+            Check.That(TestWindowOpacity.Instance.TryWrite(handle, originalColorKey, originalAlpha, originalFlags),
+                "Set up the original color key and opacity.");
+        }
+        var startInfo = new ProcessStartInfo(Path.ChangeExtension(typeof(WindowSafetyTests).Assembly.Location, ".exe"))
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("--conceal-test-window");
+        startInfo.ArgumentList.Add(handle.ToInt64().ToString(CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+        using var child = Process.Start(startInfo) ?? throw new InvalidOperationException("The isolated helper did not start.");
+        try
+        {
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            Check.Equal(0, child.ExitCode, "The helper must hide only the test window before exiting.");
+            Check.That(TestWindowOpacity.Instance.TryRead(handle, out _, out var hiddenAlpha, out _) && hiddenAlpha == 0,
+                "The source must remain concealed after the hiding process exits.");
+            if (concealAgain)
+                BackgroundWindowVisibility.Hide(handle);
+            Check.That(BackgroundWindowVisibility.Restore(handle), "A new process must recover an owned window without the old in-memory record.");
+            if (wasLayered)
+            {
+                Check.That(TestWindowOpacity.Instance.TryRead(handle, out var colorKey, out var alpha, out var flags),
+                    "The original layered styling must remain.");
+                Check.Equal(originalColorKey, colorKey, "Recovery must preserve the original color key.");
+                Check.Equal(originalAlpha, alpha, "Recovery must preserve the original opacity.");
+                Check.Equal(originalFlags, flags, "Recovery must preserve the original transparency flags.");
+            }
+            else
+            {
+                Check.That((TestWindowOpacity.Instance.ReadStyle(handle) & WinApi.WS_EX_LAYERED) == 0,
+                    "Recovery must remove only the layered style introduced by WinTab.");
+            }
+            Check.Equal(0x40000, TestWindowOpacity.Instance.ReadStyle(handle) & WindowVisibilitySnapshot.TaskbarStyleMask,
+                "Recovery after process exit must restore the persisted original taskbar style.");
+            Check.That(!WinApi.IsWindowVisible(handle), "Recovery must not show a previously hidden window.");
+            Check.That(!BackgroundWindowVisibility.Restore(handle), "Successful recovery must clear its persistent ownership record.");
+        }
+        finally
+        {
+            if (!child.HasExited)
+            {
+                child.Kill();
+                await child.WaitForExitAsync();
+            }
+        }
+    });
+
+    private static Task RecoveryLeavesUnownedWindowAlone() => WithVisibilityWindow(handle =>
+    {
+        BackgroundWindowVisibility.UpdateLayeredStyle(handle, remove: false);
+        Check.That(TestWindowOpacity.Instance.TryWrite(handle, 0, 0, WinApi.LWA_ALPHA), "Set up unowned transparency.");
+        Check.That(!BackgroundWindowVisibility.Restore(handle), "An unmarked window must not be claimed by recovery.");
+        Check.That(TestWindowOpacity.Instance.TryRead(handle, out _, out var alpha, out _) && alpha == 0,
+            "Recovery must leave another application's transparency unchanged.");
+    });
+
+    private static Task WithVisibilityWindow(Action<nint> action) => WithVisibilityWindowAsync(handle =>
+    {
+        action(handle);
+        return Task.CompletedTask;
+    });
+
+    private static async Task WithVisibilityWindowAsync(Func<nint, Task> action)
+    {
+        using var scheduler = new StaTaskScheduler();
+        await Task.Factory.StartNew(async () =>
+        {
+            var handle = CreateWindowEx(0, "STATIC", "WinTab isolated opacity test", 0, 0, 0, 20, 20, (nint)(-3), 0, 0, 0);
+            Check.That(handle != 0, "The test must create its own hidden window.");
+            try { await action(handle); }
+            finally
+            {
+                ExplorerWindowVisibility.Forget(handle);
+                DestroyWindow(handle);
+            }
+        }, CancellationToken.None, TaskCreationOptions.None, scheduler).Unwrap();
+    }
+
+    private static async Task DisposedMergeCannotAct()
+    {
+        using var scheduler = new StaTaskScheduler();
+        await Task.Factory.StartNew(() =>
+        {
+            var handle = CreateTestWindow();
+            try
+            {
+                using var operation = new MergeOperation(WindowIdentity.Capture(handle), 1,
+                    CancellationToken.None, () => true, 5_000);
+                Check.That(operation.IsCurrent, "An active merge must own its source window.");
+                operation.Dispose();
+                Check.That(!operation.IsCurrent, "A completed merge must invalidate every late callback.");
+                Check.Throws<OperationCanceledException>(operation.ThrowIfInvalid,
+                    "A late operation must be rejected after disposal.");
+            }
+            finally { DestroyWindow(handle); }
+        }, CancellationToken.None, TaskCreationOptions.None, scheduler);
+    }
+
+    private static async Task MergeLifetimeIsBounded()
+    {
+        using var scheduler = new StaTaskScheduler();
+        await Task.Factory.StartNew(async () =>
+        {
+            var handle = CreateTestWindow();
+            try
+            {
+                var currentGeneration = 1;
+                using var lifetime = new CancellationTokenSource();
+                using var operation = new MergeOperation(WindowIdentity.Capture(handle), 1, lifetime.Token,
+                    () => currentGeneration == 1, 40);
+                currentGeneration++;
+                Check.That(!operation.IsCurrent, "A generation change must reject old work.");
+                Check.Throws<OperationCanceledException>(operation.ThrowIfInvalid,
+                    "Old callbacks must not act on a new generation.");
+                currentGeneration = 1;
+                try { await Task.Delay(Timeout.Infinite, operation.Token).WaitAsync(TimeSpan.FromSeconds(1)); }
+                catch (OperationCanceledException) { }
+                Check.That(!operation.IsCurrent, "The absolute deadline must invalidate the merge.");
+            }
+            finally { DestroyWindow(handle); }
+        }, CancellationToken.None, TaskCreationOptions.None, scheduler).Unwrap();
+    }
+
+    private static nint CreateTestWindow()
+    {
+        var handle = CreateWindowEx(0, "STATIC", "WinTab isolated test", 0, 0, 0, 10, 10, (nint)(-3), 0, 0, 0);
+        Check.That(handle != 0, "The isolated message-only window must be created.");
+        return handle;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint CreateWindowEx(uint extendedStyle, string className, string name, uint style,
+        int left, int top, int width, int height, nint parent, nint menu, nint instance, nint parameter);
+
+    [DllImport("user32.dll")]
+    private static extern bool DestroyWindow(nint handle);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint WaitForSingleObject(nint handle, uint milliseconds);
+}

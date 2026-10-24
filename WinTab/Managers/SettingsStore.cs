@@ -1,0 +1,221 @@
+using System;
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace WinTab.Managers;
+
+internal sealed class SettingsStore : IDisposable
+{
+    private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
+    private static readonly System.Windows.Size LegacyDefaultFormSize = new(960, 760);
+    private readonly object _gate = new();
+    private readonly string _path;
+    private readonly Action<AppSettings> _write;
+    private readonly Timer _timer;
+    private AppSettings _settings;
+    private Exception? _lastError;
+    private TaskCompletionSource<bool>? _completion;
+    private long _revision;
+    private long _requestedRevision = -1;
+    private long _writtenRevision = -1;
+    private bool _saving;
+    private bool _preserveBackup;
+    // An unreadable file may contain valid settings. Only a fresh successful load can authorize
+    // replacing it; persisting this instance's fallback would silently lose those unknown values.
+    private bool _saveBlockedByReadFailure;
+    private bool _disposed;
+
+    public SettingsStore(string path, Action<AppSettings>? write = null)
+    {
+        _path = path;
+        _write = write ?? WriteAtomically;
+        _settings = Load();
+        _timer = new Timer(state => FlushAsync(), null, Timeout.Infinite, Timeout.Infinite);
+    }
+
+    public AppSettings Snapshot => Volatile.Read(ref _settings);
+    public Exception? LastError => Volatile.Read(ref _lastError);
+    public event Action? ErrorChanged;
+
+    public bool Update(Func<AppSettings, AppSettings> update, bool deferred = false)
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var next = update(_settings);
+            if (next == _settings)
+                return false;
+
+            Volatile.Write(ref _settings, next);
+            _revision++;
+            _timer.Change(deferred ? 500 : 0, Timeout.Infinite);
+            return true;
+        }
+    }
+
+    public Task<bool> FlushAsync()
+    {
+        lock (_gate)
+        {
+            if (_disposed)
+                return Task.FromResult(_writtenRevision == _revision && LastError == null);
+
+            _timer.Change(Timeout.Infinite, Timeout.Infinite);
+            if (_saveBlockedByReadFailure)
+                return Task.FromResult(false);
+            _requestedRevision = _revision;
+            if (_saving)
+                return _completion!.Task;
+            if (_writtenRevision == _revision && LastError == null)
+                return Task.FromResult(true);
+
+            _saving = true;
+            _completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _ = Task.Run(SavePending);
+            return _completion.Task;
+        }
+    }
+
+    private void SavePending()
+    {
+        while (true)
+        {
+            AppSettings snapshot;
+            long revision;
+            lock (_gate)
+            {
+                snapshot = _settings;
+                revision = _revision;
+            }
+
+            Exception? error = null;
+            try
+            {
+                _write(snapshot);
+            }
+            catch (Exception exception)
+            {
+                // Any failure must still complete the pending save; an escaped one would leave every later
+                // save waiting on a flush that never finishes.
+                error = exception;
+            }
+
+            var previousError = Interlocked.Exchange(ref _lastError, error);
+            if (error != null || previousError != null)
+            {
+                try { ErrorChanged?.Invoke(); }
+                catch (Exception exception)
+                {
+                    System.Diagnostics.Trace.TraceError($"Settings storage status notification failed: {exception}");
+                }
+            }
+
+            lock (_gate)
+            {
+                if (error == null)
+                    _writtenRevision = revision;
+                if (_requestedRevision > revision)
+                    continue;
+
+                _saving = false;
+                _completion!.TrySetResult(error == null);
+                return;
+            }
+        }
+    }
+
+    private AppSettings Load()
+    {
+        try
+        {
+            return Read(_path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            RecordLoadFailure(exception);
+        }
+
+        try
+        {
+            var backup = Read(_path + ".bak");
+            _preserveBackup = true;
+            _lastError ??= new IOException("The settings file was missing; the last valid backup was restored.");
+            return backup;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException)
+        {
+            RecordLoadFailure(exception);
+            return new AppSettings();
+        }
+    }
+
+    private void RecordLoadFailure(Exception exception)
+    {
+        if (exception is FileNotFoundException or DirectoryNotFoundException)
+            return;
+        _lastError ??= exception;
+        if (exception is not JsonException)
+            _saveBlockedByReadFailure = true;
+    }
+
+    private static AppSettings Read(string path)
+    {
+        var json = File.ReadAllText(path, Encoding.UTF8);
+        AppSettings settings;
+        try
+        {
+            settings = JsonSerializer.Deserialize<AppSettings>(json)
+                ?? throw new JsonException("The settings file does not contain an object.");
+        }
+        catch (ArgumentException exception)
+        {
+            throw new JsonException("The settings file contains an invalid value.", exception);
+        }
+
+        if (settings.FormSize is not { } size)
+            return settings;
+        if (!double.IsFinite(size.Width) || !double.IsFinite(size.Height) || size.Width <= 0 || size.Height <= 0)
+            throw new JsonException("The saved window dimensions must be finite and positive.");
+        // Earlier versions stored their fixed 960x760 default without any user resize; treating it as
+        // unset lets those installs fit the current content instead of keeping a scroll bar.
+        return size == LegacyDefaultFormSize ? settings with { FormSize = null } : settings;
+    }
+
+    private void WriteAtomically(AppSettings snapshot)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        var temporaryPath = _path + ".tmp";
+        using (var stream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(stream, snapshot, SerializerOptions);
+            stream.Flush(flushToDisk: true);
+        }
+
+        if (File.Exists(_path))
+        {
+            // Damage may occur after startup. Only a still-valid primary may rotate into the backup;
+            // an unreadable primary aborts saving rather than replacing data we cannot inspect.
+            var preserveBackup = _preserveBackup;
+            try { _ = Read(_path); }
+            catch (JsonException) { preserveBackup = true; }
+            File.Replace(temporaryPath, _path, preserveBackup ? null : _path + ".bak");
+        }
+        else
+            File.Move(temporaryPath, _path);
+        _preserveBackup = false;
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            _timer.Dispose();
+        }
+    }
+}

@@ -1,0 +1,170 @@
+name: Build And Release Installer
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要重跑发布的【已存在】tag（如 v2.0.5）。⚠️ 只能填已发布过的 tag：新版本号会创建新 Release 并劫持 /releases/latest"
+        required: true
+        type: string
+
+env:
+  PROJECT_NAME: WinTab
+  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+
+jobs:
+  # 安全闸门：只允许对【已存在】的 tag 发布。
+  # 本工作流建的 Release 是 draft:false 且非 prerelease，会直接成为 /releases/latest；
+  # 而 WinTab 的更新检查读的就是 /releases/latest，所以用新版本号误触发会劫持所有已安装用户的更新。
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify tag exists
+        shell: bash
+        run: |
+          git fetch --tags --force
+          if ! git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "::error::tag ${RELEASE_TAG} 不存在。本工作流只允许对【已存在】的 tag 重跑发布。用新版本号触发会创建新 Release 并劫持 /releases/latest，导致所有已安装用户的更新检查失效。"
+            exit 1
+          fi
+          if [ -z "$(git tag -l --format='%(contents)' "${RELEASE_TAG}")" ]; then
+            echo "::warning::tag ${RELEASE_TAG} 的附注为空，Release 正文将写入占位提示。"
+          fi
+          echo "tag ${RELEASE_TAG} 校验通过 -> $(git rev-parse "${RELEASE_TAG}^{commit}")"
+
+  build:
+    needs: guard
+    runs-on: windows-latest
+    strategy:
+      fail-fast: true
+      max-parallel: 3
+      matrix:
+        arch: [x64, x86, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Setup Node.js
+        if: matrix.arch != 'x86'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: WinTab.Desktop/frontend/package-lock.json
+
+      - name: Setup Go
+        if: matrix.arch != 'x86'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: WinTab.Desktop/go.mod
+          cache-dependency-path: WinTab.Desktop/go.sum
+
+      - name: Test and publish app with bundled settings
+        shell: pwsh
+        run: |
+          ./build.ps1 -Arch ${{ matrix.arch }} -Version $env:RELEASE_TAG -SkipInstaller
+
+      - name: Upload publish output
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-${{ matrix.arch }}
+          path: publish/net9.0-windows/${{ matrix.arch }}
+
+  build-installer:
+    needs: build
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        arch: [x64, x86, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download publish output
+        uses: actions/download-artifact@v4
+        with:
+          name: publish-${{ matrix.arch }}
+          path: publish/net9.0-windows/${{ matrix.arch }}
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          ./build.ps1 -Arch ${{ matrix.arch }} -Version $env:RELEASE_TAG -SkipPublish
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.arch }}
+          path: dist/*.exe
+
+  create-release:
+    needs: build-installer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # 更新说明由 tag 附注承载，必须拿到附注对象
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          merge-multiple: true
+          path: release-artifacts
+
+      - name: Prepare release body
+        shell: bash
+        run: |
+          git fetch --tags --force
+          notes=$(git tag -l --format='%(contents)' "${RELEASE_TAG}")
+          if [ -n "$notes" ]; then
+            printf '%s\n' "$notes" > release-body.md
+          else
+            {
+              echo "### 更新内容"
+              echo ""
+              echo "⚠️ 本版本未提供中文更新说明：tag \`${RELEASE_TAG}\` 的附注为空。"
+              echo ""
+              echo "请用 \`git tag -a ${RELEASE_TAG} -F <说明文件>\` 重新打附注标签后重跑发布。"
+            } > release-body.md
+          fi
+          echo "----- release-body.md -----"
+          cat release-body.md
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.PROJECT_NAME }} ${{ env.RELEASE_TAG }}
+          draft: false
+          body_path: release-body.md
+          files: |
+            release-artifacts/*.exe

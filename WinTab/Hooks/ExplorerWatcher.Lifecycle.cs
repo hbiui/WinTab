@@ -1,0 +1,397 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using SHDocVw;
+using WinTab.Helpers;
+using WinTab.Models;
+using WinTab.WinAPI;
+
+namespace WinTab.Hooks;
+
+public partial class ExplorerWatcher
+{
+    private const int MergeTimeoutMs = 5_000;
+    private const int MergeCompletionTimeoutMs = 1_500;
+    /// <summary>
+    /// Windows 11 preloads a hidden Explorer frame long before the user opens a folder and reuses it for
+    /// that folder later. A concealed frame therefore only starts spending its merge budget once Explorer
+    /// has actually shown it; until then the budget is "not started".
+    /// </summary>
+    private const long MergeBudgetNotStarted = long.MaxValue;
+    private readonly Timer _mergeSafetyTimer;
+    private readonly Timer _frameWatchdogTimer;
+    private int _maintainingFrameConcealment;
+    private readonly Timer _selectionTimer;
+    private CancellationTokenSource _shellLifetime = new();
+    private CancellationTokenSource _hookLifetime = new();
+    private Task _shellTransitionTask = Task.CompletedTask;
+    private int _shellGeneration;
+    private int _hookGeneration;
+    private int _shellTransitionScheduled;
+    private int _recoveringMergeSources;
+    private volatile bool _disposed;
+
+    private sealed record ConcealedWindow(WindowIdentity Identity, int Generation)
+    {
+        public long ExpiresAt = MergeBudgetNotStarted;
+        public int RestoreAttempts;
+        public long RetryAfter;
+        public volatile bool Recovering;
+        /// <summary>Explorer picked up a close request but has not answered since; the window may still be closing.</summary>
+        public bool ClosePending;
+    }
+
+    public event Action<string>? StatusChanged;
+    private CancellationToken CurrentCancellation => _currentMerge.Value?.Token ?? _shellLifetime.Token;
+
+    private void ReportStatus(string message)
+    {
+        ExplorerDebugLog.Write(message);
+        StatusChanged?.Invoke(message);
+    }
+
+    private WindowInfo CreateWindowInfo(InternetExplorer window) => new()
+    {
+        Identity = WindowIdentity.Capture(new IntPtr(window.HWND)),
+        Generation = _shellGeneration,
+        // Class names do not distinguish Control Panel, so classify it before adoption can hide or reuse it.
+        Location = TryGetLocation(window)
+    };
+
+    private bool IsRegisteredWindow(InternetExplorer window, WindowInfo info)
+    {
+        lock (_windowEntryDictLock)
+            return info.Generation == _shellGeneration &&
+                _windowEntryDict.TryGetValue(window, out WindowInfo? current) && ReferenceEquals(current, info);
+    }
+
+    private bool IsCurrentWindow(InternetExplorer window, WindowInfo info) =>
+        !_disposed && !info.Closed && info.Identity.IsCurrent && IsRegisteredWindow(window, info);
+
+    private int RemainingMergeTime(nint handle)
+    {
+        if (!_mergeSourceHWnds.TryGetValue(handle, out var concealed))
+            return MergeTimeoutMs;
+        var expiresAt = Interlocked.Read(ref concealed.ExpiresAt);
+        return expiresAt == MergeBudgetNotStarted
+            ? MergeTimeoutMs
+            : (int)Math.Clamp(expiresAt - Environment.TickCount64, 1, MergeTimeoutMs);
+    }
+
+    /// <summary>Starts the merge budget the first time Explorer is seen showing the concealed frame.</summary>
+    private static void StartMergeBudgetIfShown(ConcealedWindow concealed)
+    {
+        if (Interlocked.Read(ref concealed.ExpiresAt) == MergeBudgetNotStarted &&
+            WinApi.IsWindowVisible(concealed.Identity.Handle))
+        {
+            Interlocked.CompareExchange(ref concealed.ExpiresAt, Environment.TickCount64 + MergeTimeoutMs, MergeBudgetNotStarted);
+        }
+    }
+
+    /// <summary>Whether the window's thread is answering messages right now. WM_NULL asks nothing of Explorer.</summary>
+    private static bool IsWindowAnswering(nint handle) => WinApi.TrySendMessage(handle, WinApi.WM_NULL, 0, 0);
+
+    /// <summary>
+    /// A close request cannot be taken back once Explorer has picked it up, and Explorer destroys the frame
+    /// while handling it. A source that stops answering after the request therefore stays concealed until it
+    /// answers again or disappears; showing it earlier could flash a window that is being destroyed.
+    /// </summary>
+    private bool MarkClosePending(nint handle)
+    {
+        if (!_mergeSourceHWnds.TryGetValue(handle, out var concealed))
+            return false;
+        lock (concealed)
+        {
+            if (concealed.Recovering || !concealed.Identity.IsCurrent)
+                return false;
+            concealed.ClosePending = true;
+        }
+        return true;
+    }
+
+    /// <summary>True while a pending close is still unanswered; the pending state ends once the window answers or is gone.</summary>
+    private static bool IsClosePending(ConcealedWindow concealed)
+    {
+        lock (concealed)
+        {
+            if (!concealed.ClosePending)
+                return false;
+        }
+        if (concealed.Identity.IsCurrent && !IsWindowAnswering(concealed.Identity.Handle))
+            return true;
+        lock (concealed)
+            concealed.ClosePending = false;
+        return false;
+    }
+
+    private void EnsureCurrentMerge()
+    {
+        if (_disposed)
+            throw new OperationCanceledException("WinTab is stopping.");
+        _shellLifetime.Token.ThrowIfCancellationRequested();
+        _currentMerge.Value?.ThrowIfInvalid();
+    }
+
+    private Task RunShellWorkAsync(Func<Task> action)
+    {
+        var generation = _shellGeneration;
+        return Task.Factory.StartNew(async () =>
+        {
+            if (_disposed || generation != _shellGeneration || _shellWindows == null || _shellLifetime.IsCancellationRequested)
+                return;
+            try
+            {
+                await action();
+            }
+            catch (OperationCanceledException) when (_disposed || generation != _shellGeneration || _shellLifetime.IsCancellationRequested)
+            {
+                ExplorerDebugLog.Write("Retired Explorer work cancelled");
+            }
+            catch (Exception exception) when (IsDisconnectedShell(exception))
+            {
+                if (!_disposed && generation == _shellGeneration)
+                {
+                    RetireShellConnection("shell-work-disconnected");
+                    ReportStatus($"Explorer connection disconnected ({exception.HResult:X8}); reconnecting.");
+                }
+            }
+            catch (Exception exception)
+            {
+                ReportStatus($"Explorer background work failed: {exception.GetType().Name}:{exception.Message}");
+                throw;
+            }
+        }, CancellationToken.None, TaskCreationOptions.DenyChildAttach, _staTaskScheduler).Unwrap();
+    }
+
+    private void EnsureWindowIdentity(WindowIdentity identity)
+    {
+        EnsureCurrentMerge();
+        if (!identity.IsCurrent)
+            throw new OperationCanceledException("The window no longer belongs to this operation.");
+    }
+
+    private Task CacheActiveSelectionAsync()
+    {
+        if (!_isForcingTabs || !ExplorerWindowDiscovery.IsFileExplorerForeground(out var handle))
+            return Task.CompletedTask;
+        var tab = GetActiveTabHandle(handle);
+        var window = GetWindowByTabHandle(tab, handle);
+        if (window == null)
+            return Task.CompletedTask;
+        WindowInfo? info;
+        lock (_windowEntryDictLock)
+            _windowEntryDict.TryGetValue(window, out info);
+        if (info == null || !IsCurrentWindow(window, info))
+            return Task.CompletedTask;
+
+        info.RefreshSelection(() => TryGetSelectedItems(window),
+            () => IsCurrentWindow(window, info) && GetActiveTabHandle(handle) == tab);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Native-only maintenance is independent of the Shell STA and of the short event pulse. Explorer
+    /// can create a replacement preload or reset its layered style long after the last show event.
+    /// Discover and re-conceal those frames while they are still hidden, not on the next folder open.
+    /// </summary>
+    private void MaintainExplorerFrameConcealment(object? state)
+    {
+        if (!_isForcingTabs || !_preExistingExplorerWindowsProtected || _disposed ||
+            Interlocked.Exchange(ref _maintainingFrameConcealment, 1) != 0)
+            return;
+        try
+        {
+            ConcealPreloadedExplorerFrames();
+            ConcealMergeSourceWindowsOnce();
+        }
+        catch (Exception exception)
+        {
+            ExplorerDebugLog.Write($"Explorer frame concealment maintenance failed: {exception.GetType().Name}:{exception.Message}");
+        }
+        finally
+        {
+            Volatile.Write(ref _maintainingFrameConcealment, 0);
+        }
+    }
+
+    private void RecoverExpiredMergeSources(object? state)
+    {
+        if (Interlocked.Exchange(ref _recoveringMergeSources, 1) != 0)
+            return;
+        try
+        {
+            foreach (var pair in _mergeSourceHWnds)
+            {
+                var concealed = pair.Value;
+                string? status = null;
+                // A source that has not answered since its close request may still be closing; it is neither
+                // shown nor reported until it answers again or disappears.
+                var closeRequested = concealed.ClosePending;
+                if (closeRequested && IsClosePending(concealed))
+                    continue;
+                lock (concealed)
+                {
+                    // A frame the shell has shown (even if the show event was missed) starts its budget here.
+                    StartMergeBudgetIfShown(concealed);
+                    var open = concealed.Identity.IsCurrent;
+                    var keptOpen = closeRequested && open;
+                    if (!keptOpen && open && !concealed.Recovering && _isForcingTabs && concealed.Generation == _hookGeneration &&
+                        Environment.TickCount64 < Interlocked.Read(ref concealed.ExpiresAt))
+                        continue;
+                    if (Environment.TickCount64 < concealed.RetryAfter)
+                        continue;
+
+                    concealed.RestoreAttempts++;
+                    if (RestoreConcealedWindow(concealed))
+                    {
+                        // A frame that no longer exists (Explorer discarded it or finished closing it) is simply forgotten.
+                        if (keptOpen)
+                            status = "Explorer kept the merged source window open; it has been restored.";
+                        else if (open)
+                            status = "A merge exceeded its time limit; the source window was restored.";
+                    }
+                    else
+                    {
+                        // A transient failure must never turn into a permanently abandoned transparent
+                        // window. Back off after repeated failures while retaining the recovery record.
+                        concealed.RetryAfter = Environment.TickCount64 + (concealed.RestoreAttempts >= 8 ? 2_000 : 250);
+                        if (concealed.RestoreAttempts == 8)
+                            status = "Explorer window recovery is still pending; recovery will continue in the background.";
+                    }
+                }
+                if (status != null)
+                    ReportStatus(status);
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref _recoveringMergeSources, 0);
+        }
+    }
+
+    private bool RestoreConcealedWindow(ConcealedWindow concealed)
+    {
+        lock (concealed)
+        {
+            concealed.Recovering = true;
+            if (concealed.Identity.IsCurrent && !ExplorerWindowVisibility.Restore(concealed.Identity))
+                return false;
+            ExplorerWindowVisibility.Forget(concealed.Identity);
+            _mergeSourceHWnds.TryRemove(new KeyValuePair<nint, ConcealedWindow>(concealed.Identity.Handle, concealed));
+            RemoveClosingMergeSource(concealed.Identity);
+            if (concealed.Identity.IsCurrent)
+                PreventWindowHiding(concealed.Identity.Handle);
+            return true;
+        }
+    }
+
+    private MergeOperation? CreateMergeCompletionOperation(InternetExplorer window, MergeOperation source)
+    {
+        if (!TryGetTrackedEntry(window, out var entry) || entry.Value.Identity != source.Identity ||
+            !_mergeSourceHWnds.TryGetValue(source.Identity.Handle, out var concealed))
+            return null;
+
+        lock (concealed)
+        {
+            if (concealed.Recovering || concealed.Identity != source.Identity || concealed.Generation != source.Generation)
+                return null;
+            var completion = new MergeOperation(source.Identity, source.Generation, _shellLifetime.Token,
+                () => _isForcingTabs && source.Generation == _hookGeneration && IsCurrentWindow(window, entry.Value),
+                MergeCompletionTimeoutMs, _hookLifetime.Token);
+            if (!completion.IsCurrent)
+            {
+                completion.Dispose();
+                return null;
+            }
+            concealed.ExpiresAt = Environment.TickCount64 + MergeCompletionTimeoutMs;
+            return completion;
+        }
+    }
+
+    private void RemoveClosingMergeSource(WindowIdentity identity)
+    {
+        if (_closingMergeSourceHWnds.TryGetValue(identity.Handle, out var operation) && operation.Identity == identity)
+            _closingMergeSourceHWnds.TryRemove(new KeyValuePair<nint, MergeOperation>(identity.Handle, operation));
+    }
+
+    private async Task InitializeShellAsync(int processId)
+    {
+        try
+        {
+            await Task.WhenAll(_registrationWork.WhenIdle, _selectionWork.WhenIdle).ConfigureAwait(false);
+            await Task.Factory.StartNew(async () =>
+            {
+                if (_disposed)
+                    return;
+                DisposeShellObjects();
+                _shellLifetime.Dispose();
+                _shellLifetime = new CancellationTokenSource();
+                Interlocked.Increment(ref _shellGeneration);
+                _mainExplorerProcessId = processId;
+                await InitializeShellObjectsAsync();
+                if (!_disposed && !_shellLifetime.IsCancellationRequested)
+                {
+                    _selectionTimer.Change(500, 500);
+                    OnShellInitialized?.Invoke();
+                }
+            }, CancellationToken.None, TaskCreationOptions.DenyChildAttach, _staTaskScheduler).Unwrap().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _mainExplorerProcessId = 0;
+            ReportStatus($"Explorer connection failed: {exception.GetType().Name}");
+        }
+        finally
+        {
+            Volatile.Write(ref _shellTransitionScheduled, 0);
+        }
+    }
+
+    internal static bool IsDisconnectedShell(Exception exception) =>
+        exception is InvalidComObjectException || exception is COMException && exception.HResult is
+            unchecked((int)0x80010108) or unchecked((int)0x800401FD) or
+            unchecked((int)0x800706BA) or unchecked((int)0x800706BE) or
+            unchecked((int)0x80010007) or unchecked((int)0x80010012);
+
+    private void RetireShellConnection(string reason)
+    {
+        CompleteClosedSessions(shellEnded: true);
+        _preExistingExplorerWindowsProtected = false;
+        Interlocked.Increment(ref _shellGeneration);
+        _shellLifetime.Cancel();
+        StopMergeSourceConcealPulse();
+        RecoverHiddenExplorerWindows(reason);
+        _mainExplorerProcessId = 0;
+    }
+
+    private async Task FinishDisposalAsync()
+    {
+        try
+        {
+            await Task.WhenAll(_registrationWork.StopAsync(), _selectionWork.StopAsync(), _shellTransitionTask).ConfigureAwait(false);
+            await Task.Factory.StartNew(DisposeShellObjects, CancellationToken.None,
+                TaskCreationOptions.DenyChildAttach, _staTaskScheduler).ConfigureAwait(false);
+            if (_sessionStore != null)
+                await _sessionStore.FlushAsync().ConfigureAwait(false);
+            if (_liveSessionStore != null)
+                await _liveSessionStore.FlushAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError($"Explorer cleanup failed: {exception.GetType().Name}");
+        }
+        finally
+        {
+            _staTaskScheduler.Dispose();
+            _shellLifetime.Dispose();
+            _hookLifetime.Dispose();
+            _sessionLifetime.Dispose();
+            _sessionStore?.Dispose();
+            _liveSessionStore?.Dispose();
+            _instanceRunning = false;
+        }
+    }
+}

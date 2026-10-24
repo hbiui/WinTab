@@ -1,0 +1,180 @@
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
+using System.Windows;
+using WinTab.Helpers;
+using WinTab.Hooks;
+
+namespace WinTab.Managers;
+
+public static class SettingsManager
+{
+    private static readonly SettingsStore Store = new(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "WinTab", Constants.SettingsFileName));
+
+    internal static AppSettings Snapshot => Store.Snapshot;
+
+    public static event EventHandler<PropertyChangedEventArgs>? StaticPropertyChanged;
+    public static event Action? StorageErrorChanged;
+    public static Exception? StorageError => Store.LastError;
+
+    static SettingsManager()
+    {
+        Store.ErrorChanged += () => StorageErrorChanged?.Invoke();
+    }
+
+    public static bool IsWindowHookActive
+    {
+        get => Store.Snapshot.WindowHook;
+        set => SetProperty(settings => settings with { WindowHook = value });
+    }
+
+    public static bool ReuseTabs
+    {
+        get => Store.Snapshot.ReuseTabs;
+        set => SetProperty(settings => settings with { ReuseTabs = value });
+    }
+
+    public static bool RestoreTabs
+    {
+        get => Store.Snapshot.RestoreTabs;
+        set => SetProperty(settings => settings with { RestoreTabs = value });
+    }
+
+    public static bool ReopenClosedTab
+    {
+        get => Store.Snapshot.ReopenClosedTab;
+        set => SetProperty(settings => settings with { ReopenClosedTab = value });
+    }
+
+    /// <summary>Effective recording state, including history required by the independently enabled shortcut.</summary>
+    public static bool ShouldRecordClosedTabs => Store.Snapshot.ShouldRecordClosedTabs;
+
+    public static bool RestoreGroupShortcutEnabled => Store.Snapshot.RestoreGroupShortcutEnabled;
+    public static string RestoreGroupShortcut => Store.Snapshot.RestoreGroupShortcut;
+    public static bool ReopenTabShortcutEnabled => Store.Snapshot.ReopenTabShortcutEnabled;
+    public static string ReopenTabShortcut => Store.Snapshot.ReopenTabShortcut;
+
+    internal static void SetSessionShortcuts(bool groupEnabled, string group, bool tabEnabled, string tab) =>
+        SetProperty(settings => settings with
+        {
+            RestoreGroupShortcutEnabled = groupEnabled, RestoreGroupShortcut = group,
+            ReopenTabShortcutEnabled = tabEnabled, ReopenTabShortcut = tab
+        });
+
+    public static bool RestoreOnAnyFolder
+    {
+        get => Store.Snapshot.RestoreOnAnyFolder;
+        set => SetProperty(settings => settings with { RestoreOnAnyFolder = value });
+    }
+
+    public static bool RestoreSingleTab
+    {
+        get => Store.Snapshot.RestoreSingleTab;
+        set => SetProperty(settings => settings with { RestoreSingleTab = value });
+    }
+
+    public static bool DoubleClickCloseTab
+    {
+        get => Store.Snapshot.DoubleClickCloseTab;
+        set => SetProperty(settings => settings with { DoubleClickCloseTab = value });
+    }
+
+    public static bool DoubleClickCloseIncludeNotepad
+    {
+        get => Store.Snapshot.DoubleClickCloseIncludeNotepad;
+        set => SetProperty(settings => settings with { DoubleClickCloseIncludeNotepad = value });
+    }
+
+    public static bool DoubleClickEmptyAreaGoUp
+    {
+        get => Store.Snapshot.DoubleClickEmptyAreaGoUp;
+        set => SetProperty(settings => settings with { DoubleClickEmptyAreaGoUp = value });
+    }
+
+    public static bool MiddleClickForegroundTab
+    {
+        get => Store.Snapshot.MiddleClickForegroundTab;
+        set => SetProperty(settings => settings with { MiddleClickForegroundTab = value });
+    }
+
+    public static bool WheelSwitchTab
+    {
+        get => Store.Snapshot.WheelSwitchTab;
+        set => SetProperty(settings => settings with { WheelSwitchTab = value });
+    }
+
+    public static WheelSwitchSensitivity WheelSwitchSensitivity
+    {
+        get => Enum.TryParse<WheelSwitchSensitivity>(Store.Snapshot.WheelSwitchSensitivity, out var value) &&
+               Enum.IsDefined(value) ? value : WheelSwitchSensitivity.Medium;
+        set => SetProperty(settings => settings with { WheelSwitchSensitivity = value.ToString() });
+    }
+
+    public static bool AutoUpdate
+    {
+        get => Store.Snapshot.AutoUpdate;
+        set => SetProperty(settings => settings with { AutoUpdate = value });
+    }
+
+    public static bool ShowTrayIcon
+    {
+        get => Store.Snapshot.ShowTrayIcon;
+        set => SetProperty(settings => settings with { ShowTrayIcon = value });
+    }
+
+    public static string Language
+    {
+        get => NormalizeLanguage(Store.Snapshot.Language);
+        set => SetProperty(settings => settings with { Language = NormalizeLanguage(value) });
+    }
+
+    public static string Theme
+    {
+        get => NormalizeTheme(Store.Snapshot.Theme);
+        set => SetProperty(settings => settings with { Theme = NormalizeTheme(value) });
+    }
+
+    public static Size? FormSize
+    {
+        get => Store.Snapshot.FormSize;
+        set => SetProperty(settings => settings with { FormSize = value }, notify: false, deferred: true);
+    }
+
+    private static void SetProperty(Func<AppSettings, AppSettings> update,
+        [CallerMemberName] string propertyName = "", bool notify = true, bool deferred = false)
+    {
+        if (!Store.Update(update, deferred) || !notify)
+            return;
+        ExplorerDebugLog.Write($"Setting changed {propertyName}: {Describe()}");
+        StaticPropertyChanged?.Invoke(null, new PropertyChangedEventArgs(propertyName));
+    }
+
+    /// <summary>Every current setting, for the log.</summary>
+    public static string Describe() => Store.Snapshot.ToString();
+
+    public static void SaveSettings() => _ = Store.FlushAsync();
+
+    public static async Task<bool> FlushSettingsAsync(TimeSpan timeout)
+    {
+        try
+        {
+            return await Store.FlushAsync().WaitAsync(timeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            System.Diagnostics.Trace.TraceError("Settings save timed out; the last valid settings file is retained.");
+            return false;
+        }
+    }
+
+    private static string NormalizeLanguage(string? value) => string.IsNullOrWhiteSpace(value)
+        ? AppSettings.DefaultLanguage
+        : value.StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? "zh-CN" : "en-US";
+
+    private static string NormalizeTheme(string? value) =>
+        string.Equals(value, "Dark", StringComparison.OrdinalIgnoreCase) ? "Dark" : "Light";
+}
