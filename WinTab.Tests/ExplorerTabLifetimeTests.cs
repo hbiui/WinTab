@@ -893,8 +893,19 @@ internal static class ExplorerTabLifetimeTests
         {
             try
             {
-                return typeof(ExplorerWatcher).GetMethod(name, BindingFlags.Instance | BindingFlags.Static | BindingFlags.NonPublic)!
-                    .Invoke(_watcher, arguments);
+                var method = typeof(ExplorerWatcher).GetMethod(name, BindingFlags.Instance | BindingFlags.Static | BindingFlags.NonPublic)!;
+                // Optional parameters are not filled in by Invoke; pad missing trailing arguments so
+                // methods that grew optional parameters keep their old reflection call sites working.
+                var parameters = method.GetParameters();
+                if (arguments.Length < parameters.Length)
+                {
+                    var padded = new object?[parameters.Length];
+                    arguments.CopyTo(padded, 0);
+                    for (var index = arguments.Length; index < parameters.Length; index++)
+                        padded[index] = parameters[index].HasDefaultValue ? Type.Missing : null;
+                    arguments = padded;
+                }
+                return method.Invoke(_watcher, arguments);
             }
             catch (TargetInvocationException exception) when (exception.InnerException != null)
             {

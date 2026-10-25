@@ -89,7 +89,7 @@ internal static class ExplorerReuseSelectionTests
                 "The reuse search must resolve the isolated test tab before the full flow is allowed to run.");
             var openMethod = typeof(ExplorerWatcher).GetMethod("OpenTabNavigateWithSelection", BindingFlags.Instance | BindingFlags.NonPublic)!;
             var reused = await (Task<bool>)openMethod.Invoke(watcher,
-                [new WindowRecord(location, selectedItems: requested), fixture.Handle])!;
+                [new WindowRecord(location, selectedItems: requested), fixture.Handle, true])!;
 
             Check.Equal(expectedReused, reused, "Reuse must not claim success when the requested file selection cannot be applied.");
             Check.That(selected.SequenceEqual(expected), "The reused tab must contain the requested selection, without unrelated old files.");
