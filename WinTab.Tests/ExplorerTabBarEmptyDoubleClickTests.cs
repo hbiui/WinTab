@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Threading;
 using System.Threading.Tasks;
 using WinTab.Hooks;
 
@@ -9,51 +8,32 @@ internal static class ExplorerTabBarEmptyDoubleClickTests
 {
     public static IEnumerable<(string Name, Func<Task> Body)> All()
     {
-        yield return ("tab-bar double-click on empty area reopens the closed tab", ReopensAfterDoubleClick);
-        yield return ("tab-bar single click never reopens", SingleClickDoesNotReopen);
+        yield return ("tab-bar double-click on empty area reopens and swallows the second down", ReopensAfterDoubleClick);
+        yield return ("tab-bar single click never reopens nor swallows", SingleClickDoesNotReopen);
         yield return ("tab-bar double-click rejects timeout distance and window changes", RejectsMismatches);
         yield return ("tab-bar double-click fails closed when the hit test is not an empty area", FailsClosedOnNonEmpty);
-        yield return ("tab-bar double-click stop retires an unfinished reopen", StopRetiresRequest);
-    }
-
-    private sealed class Disposer : IDisposable
-    {
-        public void Dispose() { }
+        yield return ("tab-bar reopen hook ignores input after stop", StopHookIgnoresInput);
     }
 
     private sealed class Fixture
     {
         public bool EmptyArea = true;
-        public bool PendingHitTest;
-        public TaskCompletionSource<bool> Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Func<Point, long, ExplorerTabBarClick?>? CaptureOverride;
-        public Func<ExplorerTabBarClick, bool>? IsCurrentOverride;
+        public List<nint> WarmedWindows = [];
         public int ReopenCalls;
 
         public ExplorerTabBarEmptyDoubleClickHook CreateHook()
         {
             var hook = new ExplorerTabBarEmptyDoubleClickHook(
-                _ => new Disposer(),
                 (point, tick) => CaptureOverride != null ? CaptureOverride(point, tick) : new ExplorerTabBarClick(7, point, tick),
-                (_, token) => PendingHitTest ? Gate.Task.WaitAsync(token) : Task.FromResult(EmptyArea),
-                (_, _) => { ReopenCalls++; return Task.CompletedTask; },
-                click => IsCurrentOverride?.Invoke(click) ?? true,
-                () => 500, () => 4, () => 4);
+                _ => EmptyArea,
+                _ => { ReopenCalls++; return Task.CompletedTask; },
+                () => 500, () => 4, () => 4,
+                window => WarmedWindows.Add(window));
             hook.StartHook();
             return hook;
         }
     }
-
-    // The hook reconstructs the event tick as Environment.TickCount64 - DelayMs, so each feed
-    // converts the requested absolute tick into the matching delay.
-    private static NavigationPointerInput Down(Fixture fixture, Point point, long tick) =>
-        new(NavigationPointerKind.LeftDown, point, false, Delay(tick));
-
-    private static NavigationPointerInput Up(Fixture fixture, Point point, long tick) =>
-        new(NavigationPointerKind.LeftUp, point, false, Delay(tick));
-
-    private static int Delay(long tick) =>
-        (int)Math.Clamp(Environment.TickCount64 - tick, 0, int.MaxValue);
 
     private static async Task WaitForAsync(Func<bool> condition)
     {
@@ -62,57 +42,81 @@ internal static class ExplorerTabBarEmptyDoubleClickTests
         Check.That(condition(), "The expected condition was not reached in time");
     }
 
-    private static Task ReopensAfterDoubleClick()
+    private static async Task ReopensAfterDoubleClick()
     {
         var fixture = new Fixture();
         var hook = fixture.CreateHook();
-        var tick = Environment.TickCount64;
-        hook.ProcessPointer(Down(fixture, new Point(300, 60), tick));
-        hook.ProcessPointer(Up(fixture, new Point(300, 60), tick + 10));
-        hook.ProcessPointer(Down(fixture, new Point(302, 61), tick + 200));
-        hook.ProcessPointer(Up(fixture, new Point(302, 61), tick + 210));
-        return WaitForAsync(() => fixture.ReopenCalls == 1).ContinueWith(_ =>
+        try
+        {
+            var tick = Environment.TickCount64;
+            var firstHandled = hook.ProcessMouseDown(new Point(300, 60), tick);
+            hook.ProcessMouseUp(new Point(300, 60), tick + 10);
+            var secondHandled = hook.ProcessMouseDown(new Point(302, 61), tick + 200);
+            Check.That(!firstHandled, "The first down of a fresh gesture must pass through");
+            Check.That(secondHandled, "The paired second down over an empty tab bar must be swallowed");
+            await WaitForAsync(() => fixture.ReopenCalls == 1);
+            Check.Equal(1, fixture.ReopenCalls, "A completed empty tab-bar double click must reopen once");
+            Check.Equal(1, fixture.WarmedWindows.Count, "Only the first down should warm the cache");
+        }
+        finally
         {
             hook.Dispose();
-            Check.Equal(1, fixture.ReopenCalls, "A completed empty tab-bar double click must reopen once");
-        });
+        }
     }
 
-    private static Task SingleClickDoesNotReopen()
+    private static async Task SingleClickDoesNotReopen()
     {
         var fixture = new Fixture();
         var hook = fixture.CreateHook();
-        var tick = Environment.TickCount64;
-        hook.ProcessPointer(Down(fixture, new Point(300, 60), tick));
-        hook.ProcessPointer(Up(fixture, new Point(300, 60), tick + 10));
-        return Task.Delay(150).ContinueWith(_ =>
+        try
+        {
+            var tick = Environment.TickCount64;
+            var handled = hook.ProcessMouseDown(new Point(300, 60), tick);
+            hook.ProcessMouseUp(new Point(300, 60), tick + 10);
+            Check.That(!handled, "A first down must never be swallowed");
+            await Task.Delay(150);
+            Check.Equal(0, fixture.ReopenCalls, "A single click must never reopen");
+        }
+        finally
         {
             hook.Dispose();
-            Check.Equal(0, fixture.ReopenCalls, "A single click must never reopen");
-        });
+        }
     }
 
     private static Task RejectsMismatches()
     {
-        // Timeout, distance and a different window each must break the pair.
+        // Timeout, distance and a different window each must break the pair and pass through.
+        var tick = Environment.TickCount64;
+
         var timeout = new Fixture();
         var timeoutHook = timeout.CreateHook();
-        var tick = Environment.TickCount64;
-        timeoutHook.ProcessPointer(Down(timeout, new Point(300, 60), tick));
-        timeoutHook.ProcessPointer(Down(timeout, new Point(300, 60), tick + 700));
-        timeoutHook.Dispose();
+        try
+        {
+            timeoutHook.ProcessMouseDown(new Point(300, 60), tick);
+            var secondHandled = timeoutHook.ProcessMouseDown(new Point(300, 60), tick + 700);
+            Check.That(!secondHandled, "A timed-out pair must not be swallowed");
+        }
+        finally { timeoutHook.Dispose(); }
 
         var far = new Fixture();
         var farHook = far.CreateHook();
-        farHook.ProcessPointer(Down(far, new Point(300, 60), tick));
-        farHook.ProcessPointer(Down(far, new Point(320, 60), tick + 200));
-        farHook.Dispose();
+        try
+        {
+            farHook.ProcessMouseDown(new Point(300, 60), tick);
+            var secondHandled = farHook.ProcessMouseDown(new Point(320, 60), tick + 200);
+            Check.That(!secondHandled, "A too-far pair must not be swallowed");
+        }
+        finally { farHook.Dispose(); }
 
         var otherWindow = new Fixture { CaptureOverride = (point, t) => new ExplorerTabBarClick(point.X == 302 ? 8 : 7, point, t) };
         var otherHook = otherWindow.CreateHook();
-        otherHook.ProcessPointer(Down(otherWindow, new Point(300, 60), tick));
-        otherHook.ProcessPointer(Down(otherWindow, new Point(302, 60), tick + 200));
-        otherHook.Dispose();
+        try
+        {
+            otherHook.ProcessMouseDown(new Point(300, 60), tick);
+            var secondHandled = otherHook.ProcessMouseDown(new Point(302, 60), tick + 200);
+            Check.That(!secondHandled, "A pair across windows must not be swallowed");
+        }
+        finally { otherHook.Dispose(); }
 
         return Task.Delay(150).ContinueWith(_ =>
         {
@@ -122,35 +126,38 @@ internal static class ExplorerTabBarEmptyDoubleClickTests
         });
     }
 
-    private static Task FailsClosedOnNonEmpty()
+    private static async Task FailsClosedOnNonEmpty()
     {
         var fixture = new Fixture { EmptyArea = false };
         var hook = fixture.CreateHook();
-        var tick = Environment.TickCount64;
-        hook.ProcessPointer(Down(fixture, new Point(300, 60), tick));
-        hook.ProcessPointer(Up(fixture, new Point(300, 60), tick + 10));
-        hook.ProcessPointer(Down(fixture, new Point(302, 61), tick + 200));
-        hook.ProcessPointer(Up(fixture, new Point(302, 61), tick + 210));
-        return Task.Delay(200).ContinueWith(_ =>
+        try
+        {
+            var tick = Environment.TickCount64;
+            hook.ProcessMouseDown(new Point(300, 60), tick);
+            hook.ProcessMouseUp(new Point(300, 60), tick + 10);
+            var secondHandled = hook.ProcessMouseDown(new Point(302, 61), tick + 200);
+            Check.That(!secondHandled, "A non-empty tab-bar point must fail closed and stay native");
+            await Task.Delay(150);
+            Check.Equal(0, fixture.ReopenCalls, "A non-empty tab-bar point must never reopen");
+        }
+        finally
         {
             hook.Dispose();
-            Check.Equal(0, fixture.ReopenCalls, "A non-empty tab-bar point must fail closed");
-        });
+        }
     }
 
-    private static async Task StopRetiresRequest()
+    private static Task StopHookIgnoresInput()
     {
-        var fixture = new Fixture { PendingHitTest = true };
+        var fixture = new Fixture();
         var hook = fixture.CreateHook();
-        var tick = Environment.TickCount64;
-        hook.ProcessPointer(Down(fixture, new Point(300, 60), tick));
-        hook.ProcessPointer(Up(fixture, new Point(300, 60), tick + 10));
-        hook.ProcessPointer(Down(fixture, new Point(302, 61), tick + 200));
-        hook.ProcessPointer(Up(fixture, new Point(302, 61), tick + 210));
-        // The hit test is parked on the gate; stopping the hook must retire the gesture.
         hook.StopHook();
-        fixture.Gate.TrySetResult(true);
-        await Task.Delay(50);
-        Check.Equal(0, fixture.ReopenCalls, "A stopped hook must retire the pending reopen");
+        var tick = Environment.TickCount64;
+        var handled = hook.ProcessMouseDown(new Point(300, 60), tick);
+        hook.ProcessMouseUp(new Point(300, 60), tick + 10);
+        Check.That(!handled, "A stopped hook must not swallow input");
+        Check.Equal(0, fixture.WarmedWindows.Count, "A stopped hook must not warm the cache");
+        Check.Equal(0, fixture.ReopenCalls, "A stopped hook must never reopen");
+        hook.Dispose();
+        return Task.CompletedTask;
     }
 }

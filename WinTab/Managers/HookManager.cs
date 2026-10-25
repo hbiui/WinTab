@@ -51,7 +51,7 @@ public sealed class HookManager : IDisposable
         _middleClickHook = new ExplorerNavigationMiddleClickHook(_navigationInput);
         _fileListDoubleClickHook = new ExplorerFileListDoubleClickHook(_navigationInput, _explorerWatcher);
         _hoverPreviewHook = new ExplorerFileHoverPreviewHook(_navigationInput, _explorerWatcher);
-        _tabBarReopenHook = new ExplorerTabBarEmptyDoubleClickHook(_navigationInput, _explorerWatcher);
+        _tabBarReopenHook = new ExplorerTabBarEmptyDoubleClickHook(_explorerWatcher);
         _wheelSwitchHook = new ExplorerTabWheelSwitchHook(_explorerWatcher, () => SettingsManager.WheelSwitchSensitivity);
         _sessionShortcuts = new ExplorerSessionShortcutHook(action => _ = ExecuteSessionCommandAsync(action == SessionAction.RestoreGroup));
         _sessionShortcuts.Failed += message =>
