@@ -45,9 +45,11 @@ public static class ShellItemFactory
 
     /// <summary>
     /// Loads a thumbnail for a filesystem path. The Shell thumbnail pipeline requires an STA thread:
-    /// calls from MTA worker threads fail (the card then shows an empty placeholder), so the request
-    /// runs on a dedicated STA thread and is joined before returning. Returns null when the Shell
-    /// cannot provide one; SIIGBF_THUMBNAILONLY (0x2) keeps generic file icons out of the preview.
+    /// calls from MTA worker threads fail, so the request runs on a dedicated STA thread and is
+    /// joined before returning. SIIGBF_RESIZETOFIT (0x0) is used deliberately: probing on the target
+    /// machine showed SIIGBF_THUMBNAILONLY (0x2) returns E_FAIL for some cached files, while 0x0
+    /// always succeeded; files without a thumbnail fall back to their file-type icon, which is a
+    /// friendlier placeholder than an empty card. Returns null when even that fails.
     /// </summary>
     public static nint? GetThumbnailBitmap(string path, int size)
     {
@@ -69,7 +71,7 @@ public static class ShellItemFactory
         {
             var iid = FactoryIid;
             SHCreateItemFromParsingName(path, nint.Zero, ref iid, out var factory);
-            var result = factory.GetImage(new NativeSize(size, size), 0x2, out var bitmap);
+            var result = factory.GetImage(new NativeSize(size, size), 0x0, out var bitmap);
             if (result < 0 || bitmap == 0)
             {
                 ExplorerDebugLog.Write($"Thumbnail failed hr=0x{result:X8} for {path}");

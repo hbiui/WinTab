@@ -47,7 +47,7 @@ internal static class ExplorerMediaPreviewContent
             ".mp4" or ".mkv" or ".mov" or ".avi" or ".webm" or ".m4v" or ".wmv" or ".flv"
                 or ".mpg" or ".mpeg" or ".ts" or ".3gp" => MediaPreviewKind.Video,
             ".mp3" or ".wav" or ".flac" or ".m4a" or ".aac" or ".ogg" or ".wma" or ".opus" => MediaPreviewKind.Audio,
-            ".txt" or ".log" or ".ini" => MediaPreviewKind.Text,
+            ".txt" or ".log" or ".ini" or ".md" or ".markdown" => MediaPreviewKind.Text,
             _ => null
         };
     }
