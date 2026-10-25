@@ -34,6 +34,7 @@ internal sealed class ExplorerTabBarEmptyDoubleClickHook : IHook
     private readonly Action<nint> _warmCache;
     private readonly Action _install;
     private readonly TabStripHitTester _tabStrip;
+    private readonly bool _ownsTabStrip;
     private LowLevelMouseHook? _lowLevelMouseHook;
     private ExplorerTabBarClick? _firstDown;
     private bool _leftDown;
@@ -44,7 +45,7 @@ internal sealed class ExplorerTabBarEmptyDoubleClickHook : IHook
 
     public ExplorerTabBarEmptyDoubleClickHook(ExplorerWatcher watcher)
     {
-        // Defaults live in the body: the empty-area hit test needs this hook's own TabStripHitTester,
+        // Defaults live in the body: the empty-area hit test needs a TabStripHitTester,
         // and constructor initializers cannot reference instance members.
         _capture = Capture;
         _hitTest = IsEmptyTabBarArea;
@@ -54,7 +55,10 @@ internal sealed class ExplorerTabBarEmptyDoubleClickHook : IHook
         _doubleClickHeightPx = () => WinApi.GetSystemMetrics(37);
         _warmCache = window => _tabStrip.ScheduleRefresh(window);
         _install = InstallLowLevelHook;
-        _tabStrip = new TabStripHitTester();
+        // The watcher's shared hit tester is kept warm by its own registration events, so the
+        // double-click decision almost never waits on a cold UIA cache; this hook must not dispose it.
+        _tabStrip = watcher.TabStrip;
+        _ownsTabStrip = false;
     }
 
     internal ExplorerTabBarEmptyDoubleClickHook(
@@ -75,6 +79,7 @@ internal sealed class ExplorerTabBarEmptyDoubleClickHook : IHook
         _warmCache = warmCache;
         _install = () => { };
         _tabStrip = new TabStripHitTester();
+        _ownsTabStrip = true;
     }
 
     public void StartHook()
@@ -265,7 +270,8 @@ internal sealed class ExplorerTabBarEmptyDoubleClickHook : IHook
         var hook = _lowLevelMouseHook;
         _lowLevelMouseHook = null;
         hook?.Dispose();
-        _tabStrip.Dispose();
+        if (_ownsTabStrip)
+            _tabStrip.Dispose();
         _disposed = true;
         GC.SuppressFinalize(this);
     }
