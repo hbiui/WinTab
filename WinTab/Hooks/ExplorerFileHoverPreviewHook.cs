@@ -27,6 +27,8 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
     private readonly Func<ExplorerFileHoverItem, string, CancellationToken, Task<ExplorerMediaPreview?>> _resolve;
     private readonly Func<IExplorerPreviewWindow> _createWindow;
     private readonly Func<ExplorerFileHoverItem, bool> _stillCurrent;
+    private readonly Func<Action, Task> _marshalToUi;
+    private Dispatcher? _dispatcher;
     private DispatcherTimer? _timer;
     private IDisposable? _input;
     private IExplorerPreviewWindow? _window;
@@ -47,14 +49,24 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
 
     internal ExplorerFileHoverPreviewHook(ExplorerWatcher watcher,
         Func<ExplorerFileHoverPreviewHook, IDisposable> observeInput)
-        : this(watcher, observeInput,
-            () => WinApi.GetCursorPos(out var point) ? point : default,
-            point => ExplorerFileHoverIdentity.TryCapture(point, out var item) ? item : null,
-            (item, watcher_) => ResolvePath(item, watcher_),
-            (item, path, token) => ExplorerMediaPreviewContent.ResolveAsync(item, path, token),
-            () => new UI.Views.Controls.MediaPreviewWindow(),
-            item => ExplorerNavigationAccess.ForegroundFrame() == item.Window.Handle)
     {
+        // The card is WPF: it must be created and shown on WinTab's UI (STA) thread. StartHook captures
+        // that dispatcher; every late asynchronous result hops back through it before touching UI.
+        _watcher = watcher;
+        _observeInput = observeInput;
+        _cursor = () => WinApi.GetCursorPos(out var point) ? point : default;
+        _identify = point => ExplorerFileHoverIdentity.TryCapture(point, out var item) ? item : null;
+        _resolvePath = (item, watcher_) => ResolvePath(item, watcher_);
+        _resolve = (item, path, token) => ExplorerMediaPreviewContent.ResolveAsync(item, path, token);
+        _createWindow = () => new UI.Views.Controls.MediaPreviewWindow();
+        _stillCurrent = item => ExplorerNavigationAccess.ForegroundFrame() == item.Window.Handle;
+        _marshalToUi = action => MarshalToUi(action);
+    }
+
+    private Task MarshalToUi(Action action)
+    {
+        var dispatcher = _dispatcher ?? Dispatcher.CurrentDispatcher;
+        return dispatcher.InvokeAsync(action).Task;
     }
 
     internal ExplorerFileHoverPreviewHook(
@@ -65,7 +77,8 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
         Func<ExplorerFileHoverItem, ExplorerWatcher, string?> resolvePath,
         Func<ExplorerFileHoverItem, string, CancellationToken, Task<ExplorerMediaPreview?>> resolve,
         Func<IExplorerPreviewWindow> createWindow,
-        Func<ExplorerFileHoverItem, bool> stillCurrent)
+        Func<ExplorerFileHoverItem, bool> stillCurrent,
+        Func<Action, Task> marshalToUi)
     {
         _watcher = watcher;
         _observeInput = observeInput;
@@ -75,6 +88,7 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
         _resolve = resolve;
         _createWindow = createWindow;
         _stillCurrent = stillCurrent;
+        _marshalToUi = marshalToUi;
     }
 
     private readonly Func<ExplorerFileHoverPreviewHook, IDisposable> _observeInput;
@@ -94,7 +108,7 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
             throw;
         }
         Reset();
-        var dispatcher = Dispatcher.CurrentDispatcher;
+        _dispatcher = Dispatcher.CurrentDispatcher;
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(100) };
         _timer.Tick += (_, _) => ProcessTick();
         _timer.Start();
@@ -193,14 +207,19 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
         try
         {
             var preview = await _resolve(item, path, cancellation.Token).ConfigureAwait(false);
-            var window = _window ??= _createWindow();
-            var show = !cancellation.IsCancellationRequested && preview != null &&
-                       generation == _generation && _active &&
-                       _stillCurrent(item) &&
-                       ExplorerFileHoverIdentity.IsSameItem(item, CurrentItem());
-            if (!show || preview == null)
-                return;
-            window.Show(preview, item.Point);
+            // Resolution may finish on a thread-pool (MTA) thread; WPF windows can only be created and
+            // shown on the STA UI thread, so the final hop always goes through the UI dispatcher.
+            await _marshalToUi(() =>
+            {
+                var show = !cancellation.IsCancellationRequested && preview != null &&
+                           generation == _generation && _active &&
+                           _stillCurrent(item) &&
+                           ExplorerFileHoverIdentity.IsSameItem(item, CurrentItem());
+                if (!show || preview == null)
+                    return;
+                var window = _window ??= _createWindow();
+                window.Show(preview, item.Point);
+            }).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)
@@ -275,7 +294,11 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
 
     private void HideWindow()
     {
-        try { _window?.Hide(); }
+        var window = _window;
+        if (window == null) return;
+        // Input and foreground notifications arrive on the raw-input observer thread; hiding is also a
+        // WPF UI-thread operation, so it hops through the same dispatcher as showing.
+        try { _marshalToUi(window.Hide); }
         catch (Exception exception)
         {
             ExplorerDebugLog.Write($"Preview hide failed: {exception.GetType().Name}:{exception.Message}");

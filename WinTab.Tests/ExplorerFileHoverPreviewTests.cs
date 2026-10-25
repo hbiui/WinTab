@@ -65,7 +65,9 @@ internal static class ExplorerFileHoverPreviewTests
                 (_, _) => Path,
                 (_, _, _) => { ResolveCalls++; return PendingResolve ? Gate.Task : Task.FromResult(Resolved); },
                 () => Window,
-                _ => true);
+                _ => true,
+                // Synchronous marshal: tests have no pumped UI dispatcher, so the show action runs inline.
+                action => { action(); return Task.CompletedTask; });
             hook.StartHook();
             return hook;
         }
