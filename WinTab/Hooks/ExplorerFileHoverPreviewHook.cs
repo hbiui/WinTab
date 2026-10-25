@@ -59,7 +59,9 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
         _resolvePath = (item, watcher_) => ResolvePath(item, watcher_);
         _resolve = (item, path, token) => ExplorerMediaPreviewContent.ResolveAsync(item, path, token);
         _createWindow = () => new UI.Views.Controls.MediaPreviewWindow();
-        _stillCurrent = item => ExplorerNavigationAccess.ForegroundFrame() == item.Window.Handle;
+        // The preview follows the cursor, not the foreground app: UIA hit-testing works while any
+        // other program is active, so the card shows as long as the Explorer window is visible.
+        _stillCurrent = item => WinApi.IsWindowVisible(item.Window.Handle);
         _marshalToUi = action => MarshalToUi(action);
     }
 
@@ -257,8 +259,14 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
         var root = WinApi.GetAncestor(window, WinApi.GA_ROOT);
         if (root != 0) window = root;
         var item = CurrentItem();
-        if (item != null && item.Window.Handle != window)
-            ResetWithHide();
+        if (item == null || item.Window.Handle == window)
+            return;
+        // Another program became foreground, but the cursor may still rest on the Explorer file;
+        // retire the hover only when the cursor has actually left that window.
+        if (WinApi.GetCursorPos(out var point) && WinApi.WindowFromPoint(point) != 0 &&
+            WinApi.GetAncestor(WinApi.WindowFromPoint(point), WinApi.GA_ROOT) == item.Window.Handle)
+            return;
+        ResetWithHide();
     }
 
     internal void ResetWithHide()
