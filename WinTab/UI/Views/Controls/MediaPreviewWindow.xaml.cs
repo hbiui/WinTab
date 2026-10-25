@@ -1,6 +1,4 @@
 using System;
-using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -28,6 +26,7 @@ public partial class MediaPreviewWindow : Window, IExplorerPreviewWindow
 
     private nint _handle;
     private bool _muted;
+    private System.Drawing.Point? _pendingPosition;
 
     public bool Visible { get; private set; }
 
@@ -39,6 +38,10 @@ public partial class MediaPreviewWindow : Window, IExplorerPreviewWindow
             _handle = new WindowInteropHelper(this).Handle;
             var style = GetWindowLong(_handle, GwlExstyle);
             _ = SetWindowLong(_handle, GwlExstyle, style | WsExNoactivate | WsExToolwindow);
+            // The first Show has no handle yet when Show() asks for a position; applying the pending
+            // cursor here places the card before it ever becomes visible.
+            if (_pendingPosition is { } pending)
+                PositionNear(pending);
         };
     }
 
@@ -49,6 +52,7 @@ public partial class MediaPreviewWindow : Window, IExplorerPreviewWindow
         PreviewImage.Source = null;
         PreviewText.Text = string.Empty;
         DurationText.Text = string.Empty;
+        FallbackText.Text = "◌";
         FallbackText.Visibility = Visibility.Collapsed;
 
         InfoText.Text = $"{preview.Kind.ToString().ToLowerInvariant()} · {preview.Info}";
@@ -68,9 +72,9 @@ public partial class MediaPreviewWindow : Window, IExplorerPreviewWindow
                 break;
         }
 
-        UpdateLayout();
-        PositionNear(cursor);
+        _pendingPosition = cursor;
         Show();
+        PositionNear(cursor);
         Visible = true;
     }
 
@@ -117,19 +121,15 @@ public partial class MediaPreviewWindow : Window, IExplorerPreviewWindow
     }
 
     /// <summary>
-    /// Builds a fully escaped file URI. A raw new Uri(path) parses '#' as a fragment and '%' as an
-    /// escape, so any file whose name contains those characters would fail as "download failed".
+    /// Builds the media source URI. Only '#' and '%' are escaped manually: a full segment escape
+    /// turns '(' into %28 and Windows Media Foundation then reports the file as not found.
     /// </summary>
     private static Uri? BuildFileUri(string path)
     {
         try
         {
-            var full = Path.GetFullPath(path).Replace('\\', '/');
-            var slash = full.IndexOf('/') + 1;
-            var drive = full.Substring(0, slash);
-            var rest = full.Substring(slash);
-            var escaped = string.Join("/", rest.Split('/').Select(Uri.EscapeDataString));
-            return new Uri(drive + escaped, UriKind.Absolute);
+            var safe = path.Replace("%", "%25").Replace("#", "%23");
+            return new Uri(safe, UriKind.Absolute);
         }
         catch (Exception exception)
         {
@@ -180,7 +180,17 @@ public partial class MediaPreviewWindow : Window, IExplorerPreviewWindow
     private void Player_MediaFailed(object sender, ExceptionRoutedEventArgs e)
     {
         WinTab.Hooks.ExplorerDebugLog.Write($"Preview playback failed: {e.ErrorException?.Message} source={Player.Source}");
-        Hide();
+        // Keep the card (hiding it would make the tick loop retry and flicker); fall back to a
+        // placeholder so the user still gets a visible, stable response for unsupported formats.
+        Player.Close();
+        Player.Source = null;
+        Player.Visibility = Visibility.Collapsed;
+        PreviewImage.Visibility = Visibility.Collapsed;
+        TextScroll.Visibility = Visibility.Collapsed;
+        ControlsBar.Visibility = Visibility.Collapsed;
+        FallbackText.Text = "⚠";
+        FallbackText.Visibility = Visibility.Visible;
+        UpdateLayout();
     }
 
     /// <summary>

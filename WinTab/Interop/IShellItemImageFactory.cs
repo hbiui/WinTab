@@ -1,5 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
+using WinTab.Hooks;
 
 namespace WinTab.Interop;
 
@@ -42,10 +44,26 @@ public static class ShellItemFactory
     private static extern bool DeleteObject(nint hObject);
 
     /// <summary>
-    /// Loads a thumbnail for a filesystem path on the calling (STA) thread. Returns null when the Shell
+    /// Loads a thumbnail for a filesystem path. The Shell thumbnail pipeline requires an STA thread:
+    /// calls from MTA worker threads fail (the card then shows an empty placeholder), so the request
+    /// runs on a dedicated STA thread and is joined before returning. Returns null when the Shell
     /// cannot provide one; SIIGBF_THUMBNAILONLY (0x2) keeps generic file icons out of the preview.
     /// </summary>
     public static nint? GetThumbnailBitmap(string path, int size)
+    {
+        nint? bitmap = null;
+        var thread = new Thread(() => bitmap = GetThumbnailBitmapOnSta(path, size))
+        {
+            IsBackground = true,
+            Name = "WinTab hover thumbnail"
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        return bitmap;
+    }
+
+    private static nint? GetThumbnailBitmapOnSta(string path, int size)
     {
         try
         {
@@ -53,11 +71,15 @@ public static class ShellItemFactory
             SHCreateItemFromParsingName(path, nint.Zero, ref iid, out var factory);
             var result = factory.GetImage(new NativeSize(size, size), 0x2, out var bitmap);
             if (result < 0 || bitmap == 0)
+            {
+                ExplorerDebugLog.Write($"Thumbnail failed hr=0x{result:X8} for {path}");
                 return null;
+            }
             return bitmap;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
+            ExplorerDebugLog.Write($"Thumbnail failed {exception.GetType().Name}:{exception.Message} for {path}");
             return null;
         }
     }
