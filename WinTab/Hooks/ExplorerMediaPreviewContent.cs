@@ -42,13 +42,29 @@ internal static class ExplorerMediaPreviewContent
             return null;
         return extension.ToString().ToLowerInvariant() switch
         {
-            ".jpg" or ".jpeg" or ".png" or ".gif" or ".bmp" or ".webp" or ".heic" or ".heif"
-                or ".tif" or ".tiff" or ".ico" or ".jfif" => MediaPreviewKind.Image,
-            ".mp4" or ".mkv" or ".mov" or ".avi" or ".webm" or ".m4v" or ".wmv" or ".flv"
-                or ".mpg" or ".mpeg" or ".ts" or ".3gp" => MediaPreviewKind.Video,
-            ".mp3" or ".wav" or ".flac" or ".m4a" or ".aac" or ".ogg" or ".wma" or ".opus"
-                or ".aif" or ".aiff" => MediaPreviewKind.Audio,
-            ".txt" or ".log" or ".ini" or ".md" or ".markdown" => MediaPreviewKind.Text,
+            // Images: formats the Shell thumbnail pipeline commonly handles on Windows 11. A missing
+            // codec degrades to the file-type icon, never a crash.
+            ".jpg" or ".jpeg" or ".jfif" or ".jpe" or ".png" or ".gif" or ".bmp" or ".dib"
+                or ".webp" or ".heic" or ".heif" or ".avif" or ".tif" or ".tiff" or ".ico"
+                => MediaPreviewKind.Image,
+            // Video: containers Media Foundation commonly plays; unsupported ones (ogv, rmvb-like)
+            // simply show the warning placeholder via MediaFailed handling.
+            ".mp4" or ".m4v" or ".mkv" or ".mov" or ".avi" or ".webm" or ".wmv" or ".flv"
+                or ".f4v" or ".mpg" or ".mpeg" or ".mpe" or ".m1v" or ".m2v" or ".ts" or ".m2ts"
+                or ".mts" or ".vob" or ".3gp" or ".3g2" or ".ogv" or ".asf" or ".divx"
+                => MediaPreviewKind.Video,
+            ".mp3" or ".wav" or ".flac" or ".m4a" or ".aac" or ".ogg" or ".oga" or ".wma"
+                or ".opus" or ".aif" or ".aiff" or ".mka" or ".mid" or ".midi"
+                => MediaPreviewKind.Audio,
+            // Documents: plain-text formats rendered inline (the 1 MB / 20 k chars cap still applies),
+            // including source code, config files and subtitle/lyric formats.
+            ".txt" or ".log" or ".ini" or ".md" or ".markdown" or ".json" or ".xml" or ".yml"
+                or ".yaml" or ".toml" or ".csv" or ".tsv" or ".html" or ".htm" or ".css"
+                or ".js" or ".mjs" or ".ts" or ".jsx" or ".tsx" or ".py" or ".rb" or ".php"
+                or ".java" or ".cs" or ".c" or ".h" or ".cpp" or ".hpp" or ".go" or ".rs"
+                or ".sql" or ".bat" or ".cmd" or ".sh" or ".ps1" or ".conf" or ".cfg"
+                or ".srt" or ".vtt" or ".lrc" or ".ass" or ".ssa" or ".nfo"
+                => MediaPreviewKind.Text,
             _ => null
         };
     }
