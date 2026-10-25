@@ -514,6 +514,11 @@ public partial class ExplorerWatcher
             // The coalesced registration worker removes closed records on the owning STA after we
             // return. A burst of closes shares one queued pass, rather than one COM task per tab.
             ScheduleShellWindowRegistration();
+            // The tab-strip rectangle cache must not serve the closed tab as a ghost: a click that
+            // lands on the new-tab button right after a close would read as a click on the ghost.
+            // Only enqueue here; the background worker reads the live tree after Explorer settles.
+            if (windowInfo.HookedTopLevelHWnd != 0)
+                TabStrip.ScheduleRefresh(windowInfo.HookedTopLevelHWnd);
         };
         windowInfo.OnNavigateHandler = (object _, ref object url) =>
         {

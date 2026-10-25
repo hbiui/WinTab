@@ -76,6 +76,16 @@ internal sealed class TabStripHitTester : IDisposable
         return true;
     }
 
+    /// <summary>The cached tab title rectangles in visual order; false while unknown.</summary>
+    public bool TryGetTabRects(nint explorerWindow, out DrawingRectangle[] tabRects)
+    {
+        tabRects = [];
+        if (!TryGetWindowRect(explorerWindow, out var windowRect) || !TryGetBounds(explorerWindow, windowRect, out var bounds))
+            return false;
+        tabRects = bounds.TabRects;
+        return true;
+    }
+
     /// <summary>Resolves a cold hit test off the input hook without discarding the gesture that requested it.</summary>
     public async Task<DrawingRectangle?> GetTabRowAsync(nint explorerWindow, CancellationToken cancellationToken)
     {

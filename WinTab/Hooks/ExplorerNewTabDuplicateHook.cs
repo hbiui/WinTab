@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Threading.Tasks;
 using H.Hooks;
@@ -118,44 +119,73 @@ internal sealed class ExplorerNewTabDuplicateHook : IHook
 
     private bool IsOnNewTabButton(ExplorerNewTabClick click)
     {
-        var hasButton = _tabStrip.TryGetNewTabButton(click.Window, out var button);
+        // The UIA cache lags behind real tab changes, so the live tab count read from the window
+        // itself decides which cached rectangles can be trusted. Ghosts must never hide the button.
+        var liveTabs = ExplorerWindowDiscovery.GetAllExplorerTabs(click.Window).Count();
+        var hasRects = _tabStrip.TryGetTabRects(click.Window, out var cachedRects);
+        var effective = hasRects ? EffectiveTabRects(cachedRects, liveTabs) : [];
+        // The cached button rectangle is only trustworthy when the cache matches the live layout.
+        var trusted = effective.Length == cachedRects.Length;
+        var button = Rectangle.Empty;
+        var hasButton = trusted && _tabStrip.TryGetNewTabButton(click.Window, out button);
         if (hasButton)
         {
             // A tiny slop absorbs the 1-2px trembling seen in real clicks; the cached rect still decides.
             button.Inflate(ButtonSlopPx, ButtonSlopPx);
         }
         var hasRow = _tabStrip.TryGetTabRow(click.Window, out var row);
-        var hitTab = hasRow ? _tabStrip.HitTestTab(click.Point, click.Window) : null;
-        var rightmost = _tabStrip.TryGetRightmostTabRight(click.Window);
-        var decided = IsNewTabButtonArea(hasButton, button, hasRow, row, hitTab, rightmost, click.Point);
-        if (decided && !hasButton)
+        var decided = IsNewTabButtonArea(hasButton, button, hasRow, row, effective, click.Point);
+        if (!hasRects || liveTabs != cachedRects.Length)
         {
-            // Debounced: the UIA button lookup missed but the field-proven guard band caught the
-            // click. Logged once per second so a persistent mismatch stays visible in the debug log.
+            // A layout change the cache has not absorbed yet: refresh now so the next click decides
+            // on the current layout instead of repeating this fallback.
+            _tabStrip.ScheduleRefresh(click.Window);
+        }
+        if (decided && !trusted)
+        {
+            // Debounced: the live tab count caught a ghost cache and the guard band decided instead.
             var now = Environment.TickCount64;
             if (now - _lastFallbackLogAt > 1_000)
             {
                 _lastFallbackLogAt = now;
-                ExplorerDebugLog.Write("New-tab button: UIA rect missing, guard-band fallback matched");
+                ExplorerDebugLog.Write($"New-tab button: ghost cache trimmed (cached={cachedRects.Length} live={liveTabs}), guard band matched");
             }
         }
         return decided;
     }
 
     /// <summary>
-    /// The click is the new-tab button when it hits the cached button rectangle, or — when UIA could
-    /// not identify the button on this build — when it lands in the guard band just right of the last
-    /// tab inside the tab row. The double-click reopen hook has used that same band to exclude the
-    /// button since f12, so its width is field-proven; the band never covers a tab title.
+    /// Drops cached tab rectangles whose tabs have already closed: the UIA tree can keep a closed
+    /// tab visible for a moment, and such a ghost would read a click on the new-tab button as a
+    /// click on that tab. Only trailing rectangles are dropped; a closed middle tab keeps its
+    /// neighbours misplaced until the next refresh, which the hooks schedule on their own actions.
     /// </summary>
-    internal static bool IsNewTabButtonArea(bool hasButton, Rectangle buttonRect, bool hasRow, Rectangle row,
-        bool? hitTab, int? rightmostRight, Point point)
+    internal static Rectangle[] EffectiveTabRects(IReadOnlyList<Rectangle> cachedRects, int liveTabCount)
+    {
+        if (liveTabCount <= 0 || cachedRects.Count <= liveTabCount)
+            return [.. cachedRects];
+        return [.. cachedRects.Take(liveTabCount)];
+    }
+
+    /// <summary>
+    /// The click is the new-tab button when it hits the cached button rectangle, or — when the
+    /// button could not be identified on this build — when it lands in the guard band just right of
+    /// the last live tab inside the tab row. The double-click reopen hook has used that same band
+    /// to exclude the button since f12, so its width is field-proven; the band never covers a live
+    /// tab title.
+    /// </summary>
+    internal static bool IsNewTabButtonArea(bool hasButton, Rectangle buttonRect, bool hasRow,
+        Rectangle row, IReadOnlyList<Rectangle> tabs, Point point)
     {
         if (hasButton && buttonRect.Contains(point))
             return true;
-        if (!hasRow || !row.Contains(point) || hitTab == true)
+        if (!hasRow || !row.Contains(point))
             return false;
-        return rightmostRight is { } edge && point.X > edge && point.X <= edge + ExplorerTabBarEmptyDoubleClickHook.NewTabButtonGuardPx;
+        if (tabs.Any(rectangle => rectangle.Contains(point)))
+            return false;
+        int? edge = tabs.Count == 0 ? null : tabs.Max(rectangle => rectangle.Right);
+        return edge is { } right && point.X > right &&
+               point.X <= right + ExplorerTabBarEmptyDoubleClickHook.NewTabButtonGuardPx;
     }
 
     private async Task DuplicateAsync(ExplorerNewTabClick click)
@@ -167,6 +197,11 @@ internal sealed class ExplorerNewTabDuplicateHook : IHook
         catch (Exception exception)
         {
             ExplorerDebugLog.Write($"New-tab button duplicate failed: {exception.GetType().Name}:{exception.Message}");
+        }
+        finally
+        {
+            // The duplicate changed the layout; do not let the next click decide on stale geometry.
+            _tabStrip.ScheduleRefresh(click.Window);
         }
     }
 

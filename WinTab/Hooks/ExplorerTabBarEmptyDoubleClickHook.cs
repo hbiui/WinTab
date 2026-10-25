@@ -252,6 +252,11 @@ internal sealed class ExplorerTabBarEmptyDoubleClickHook : IHook
         {
             ExplorerDebugLog.Write($"Tab-bar double-click reopen failed: {exception.GetType().Name}:{exception.Message}");
         }
+        finally
+        {
+            // The reopened tab changed the layout; do not let the next gesture decide on stale geometry.
+            _tabStrip.ScheduleRefresh(click.Window);
+        }
     }
 
     private void CancelPending()
