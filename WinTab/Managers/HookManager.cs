@@ -9,7 +9,7 @@ using WinTab.UI.Localization;
 namespace WinTab.Managers;
 
 /// <summary>A setting that is carried out by an input or window hook, which can fail to start or stop.</summary>
-public enum HookFeature { MergeWindows, DoubleClickClose, DoubleClickEmptyAreaGoUp, MiddleClickForeground, WheelSwitch }
+public enum HookFeature { MergeWindows, DoubleClickClose, DoubleClickEmptyAreaGoUp, MediaHoverPreview, MiddleClickForeground, WheelSwitch }
 
 /// <summary>
 /// Single owner of the hook on/off state: every UI surface calls the Set* methods here, which
@@ -23,6 +23,7 @@ public sealed class HookManager : IDisposable
     private readonly NavigationInputSource _navigationInput;
     private readonly ExplorerNavigationMiddleClickHook _middleClickHook;
     private readonly ExplorerFileListDoubleClickHook _fileListDoubleClickHook;
+    private readonly ExplorerFileHoverPreviewHook _hoverPreviewHook;
     private readonly ExplorerTabWheelSwitchHook _wheelSwitchHook;
     private readonly IExplorerSessionShortcutHook _sessionShortcuts;
     private readonly System.Windows.SessionEndingCancelEventHandler _sessionEndingHandler;
@@ -48,6 +49,7 @@ public sealed class HookManager : IDisposable
         _navigationInput = new NavigationInputSource();
         _middleClickHook = new ExplorerNavigationMiddleClickHook(_navigationInput);
         _fileListDoubleClickHook = new ExplorerFileListDoubleClickHook(_navigationInput, _explorerWatcher);
+        _hoverPreviewHook = new ExplorerFileHoverPreviewHook(_navigationInput, _explorerWatcher);
         _wheelSwitchHook = new ExplorerTabWheelSwitchHook(_explorerWatcher, () => SettingsManager.WheelSwitchSensitivity);
         _sessionShortcuts = new ExplorerSessionShortcutHook(action => _ = ExecuteSessionCommandAsync(action == SessionAction.RestoreGroup));
         _sessionShortcuts.Failed += message =>
@@ -80,6 +82,7 @@ public sealed class HookManager : IDisposable
         (HookFeature.MergeWindows, SettingsManager.IsWindowHookActive, _explorerWatcher),
         (HookFeature.DoubleClickClose, SettingsManager.DoubleClickCloseTab, _doubleClickHook),
         (HookFeature.DoubleClickEmptyAreaGoUp, SettingsManager.DoubleClickEmptyAreaGoUp, _fileListDoubleClickHook),
+        (HookFeature.MediaHoverPreview, SettingsManager.MediaHoverPreview, _hoverPreviewHook),
         (HookFeature.MiddleClickForeground, SettingsManager.MiddleClickForegroundTab, _middleClickHook),
         (HookFeature.WheelSwitch, SettingsManager.WheelSwitchTab, _wheelSwitchHook)
     ]);
@@ -98,6 +101,7 @@ public sealed class HookManager : IDisposable
         SetReopenClosedTab(SettingsManager.ReopenClosedTab);
         SetDoubleClickClose(SettingsManager.DoubleClickCloseTab);
         SetDoubleClickEmptyAreaGoUp(SettingsManager.DoubleClickEmptyAreaGoUp);
+        SetMediaHoverPreview(SettingsManager.MediaHoverPreview);
         SetMiddleClickForeground(SettingsManager.MiddleClickForegroundTab);
         SetWheelSwitch(SettingsManager.WheelSwitchTab);
     }
@@ -262,6 +266,13 @@ public sealed class HookManager : IDisposable
         RaiseStateChanged();
     }
 
+    public void SetMediaHoverPreview(bool enabled)
+    {
+        SettingsManager.MediaHoverPreview = enabled;
+        TryChangeHookStatus(_hoverPreviewHook, enabled);
+        RaiseStateChanged();
+    }
+
     public void SetMiddleClickForeground(bool enabled)
     {
         SettingsManager.MiddleClickForegroundTab = enabled;
@@ -331,6 +342,7 @@ public sealed class HookManager : IDisposable
         catch (Exception exception) { ReportHookStatus("Session shortcuts", exception.Message); }
         _wheelSwitchHook.Dispose();
         _fileListDoubleClickHook.Dispose();
+        _hoverPreviewHook.Dispose();
         _middleClickHook.Dispose();
         _navigationInput.Dispose();
         _doubleClickHook.Dispose();

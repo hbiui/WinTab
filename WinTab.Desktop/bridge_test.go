@@ -28,6 +28,10 @@ func TestWireState(t *testing.T) {
 		t.Fatal("double-click empty-area go-up default was lost")
 		t.Fatalf("wire defaults lost: %#v", state)
 	}
+	if !state.Settings.MediaHoverPreview {
+		t.Fatal("hover media preview default was lost")
+		t.Fatalf("wire defaults lost: %#v", state)
+	}
 }
 
 func TestBridgeRoutesRepliesAndEvents(t *testing.T) {

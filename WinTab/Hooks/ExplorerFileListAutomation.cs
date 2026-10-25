@@ -104,7 +104,7 @@ internal static class ExplorerFileListAutomation
         type == ControlType.Thumb || type == ControlType.Header || type == ControlType.HeaderItem ||
         type == ControlType.Menu || type == ControlType.MenuItem || type == ControlType.Text;
 
-    private static bool TryFindFileView(nint hit, out nint view, out nint tab)
+    internal static bool TryFindFileView(nint hit, out nint view, out nint tab)
     {
         view = 0;
         tab = 0;

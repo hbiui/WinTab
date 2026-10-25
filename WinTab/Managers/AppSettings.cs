@@ -27,6 +27,8 @@ internal sealed record AppSettings
     public bool DoubleClickCloseIncludeNotepad { get; init; } = true;
     /// <summary>Double-click a confirmed empty file-list background to browse its parent in the active tab.</summary>
     public bool DoubleClickEmptyAreaGoUp { get; init; } = true;
+    /// <summary>Show a preview card when the cursor dwells on a media file in the file list.</summary>
+    public bool MediaHoverPreview { get; init; } = true;
     public bool MiddleClickForegroundTab { get; init; } = true;
     public bool WheelSwitchTab { get; init; } = true;
     public string WheelSwitchSensitivity { get; init; } = "Medium";

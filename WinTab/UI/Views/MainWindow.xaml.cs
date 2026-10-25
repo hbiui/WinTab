@@ -74,6 +74,7 @@ public partial class MainWindow : Window, WinTab.UI.Desktop.IApplicationUi
         DoubleClickScopeExplorerOnly.Click += (_, _) => _hookManager.SetDoubleClickCloseIncludeNotepad(false);
         DoubleClickScopeIncludeNotepad.Click += (_, _) => _hookManager.SetDoubleClickCloseIncludeNotepad(true);
         DoubleClickEmptyAreaGoUpToggle.Click += (_, _) => _hookManager.SetDoubleClickEmptyAreaGoUp(DoubleClickEmptyAreaGoUpToggle.IsChecked == true);
+        MediaHoverPreviewToggle.Click += (_, _) => _hookManager.SetMediaHoverPreview(MediaHoverPreviewToggle.IsChecked == true);
         MiddleClickForegroundToggle.Click += (_, _) => _hookManager.SetMiddleClickForeground(MiddleClickForegroundToggle.IsChecked == true);
         WheelSwitchToggle.Click += (_, _) => _hookManager.SetWheelSwitch(WheelSwitchToggle.IsChecked == true);
         WheelSensitivityLow.Click += (_, _) => _hookManager.SetWheelSwitchSensitivity(WheelSwitchSensitivity.Low);
@@ -154,6 +155,7 @@ public partial class MainWindow : Window, WinTab.UI.Desktop.IApplicationUi
         DoubleClickScopeIncludeNotepad.IsChecked = SettingsManager.DoubleClickCloseIncludeNotepad;
         DoubleClickScopePanel.IsEnabled = SettingsManager.DoubleClickCloseTab;
         DoubleClickEmptyAreaGoUpToggle.IsChecked = SettingsManager.DoubleClickEmptyAreaGoUp;
+        MediaHoverPreviewToggle.IsChecked = SettingsManager.MediaHoverPreview;
         MiddleClickForegroundToggle.IsChecked = SettingsManager.MiddleClickForegroundTab;
         WheelSwitchToggle.IsChecked = SettingsManager.WheelSwitchTab;
         var sensitivity = SettingsManager.WheelSwitchSensitivity;
@@ -241,6 +243,8 @@ public partial class MainWindow : Window, WinTab.UI.Desktop.IApplicationUi
         DoubleClickScopeHintText.Text = UiStrings.DoubleClickScopeHint;
         DoubleClickEmptyAreaGoUpTitleText.Text = UiStrings.DoubleClickEmptyAreaGoUpTitle;
         DoubleClickEmptyAreaGoUpDescText.Text = UiStrings.DoubleClickEmptyAreaGoUpDescription;
+        MediaHoverPreviewTitleText.Text = UiStrings.MediaHoverPreviewTitle;
+        MediaHoverPreviewDescText.Text = UiStrings.MediaHoverPreviewDescription;
         MiddleClickTitleText.Text = UiStrings.MiddleClickTitle;
         MiddleClickDescText.Text = UiStrings.MiddleClickDescription;
         WheelSwitchTitleText.Text = UiStrings.WheelSwitchTitle;

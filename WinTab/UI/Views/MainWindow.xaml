@@ -277,6 +277,15 @@
                                 </Border>
                                 <Border Style="{StaticResource SettingRowStyle}">
                                     <DockPanel>
+                                        <CheckBox x:Name="MediaHoverPreviewToggle" DockPanel.Dock="Right" Style="{StaticResource SettingToggleStyle}" />
+                                        <StackPanel>
+                                            <TextBlock x:Name="MediaHoverPreviewTitleText" Text="Hover media preview" Style="{StaticResource SettingTitleStyle}" />
+                                            <TextBlock x:Name="MediaHoverPreviewDescText" Text="Show an image, video, audio or text preview when the cursor rests on a media file" Style="{StaticResource SettingDescriptionStyle}" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
+                                <Border Style="{StaticResource SettingRowStyle}">
+                                    <DockPanel>
                                         <CheckBox x:Name="MiddleClickForegroundToggle" DockPanel.Dock="Right" Style="{StaticResource SettingToggleStyle}" />
                                         <StackPanel>
                                             <TextBlock x:Name="MiddleClickTitleText" Text="Open middle-clicked tabs in foreground" Style="{StaticResource SettingTitleStyle}" />

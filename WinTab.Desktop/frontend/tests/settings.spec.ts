@@ -119,6 +119,19 @@ test('file-list parent double-click is independent and defaults on', async ({ pa
     call.args[0] === 'doubleClickEmptyAreaGoUp' && call.args[1] === false)).toBe(true)
 })
 
+test('hover media preview is independent and defaults on', async ({ page }) => {
+  await open(page)
+  const title = copies['zh-CN'].mediaHoverPreview
+  const toggle = page.getByRole('switch', { name: title, exact: true })
+  await expect(toggle).toBeChecked()
+  await toggle.click()
+  await expect(toggle).not.toBeChecked()
+  await expect(page.getByRole('switch', { name: copies['zh-CN'].doubleClickEmptyAreaGoUp, exact: true })).toBeChecked()
+  const calls = await page.evaluate(() => (window as any).__calls)
+  expect(calls.some((call: any) => call.method === 'Desktop.Set' &&
+    call.args[0] === 'mediaHoverPreview' && call.args[1] === false)).toBe(true)
+})
+
 test('physical capture, manual text and drafts survive unrelated updates', async ({ page }) => {
   await open(page)
   const group = page.getByRole('textbox', { name: '标签组恢复快捷键', exact: true })

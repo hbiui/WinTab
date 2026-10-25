@@ -16,6 +16,7 @@
     "doubleClickCloseTab": true,
     "doubleClickCloseIncludeNotepad": true,
     "doubleClickEmptyAreaGoUp": true,
+    "mediaHoverPreview": true,
     "middleClickForegroundTab": true,
     "wheelSwitchTab": true,
     "wheelSwitchSensitivity": "Medium",

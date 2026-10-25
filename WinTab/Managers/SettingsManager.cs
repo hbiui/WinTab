@@ -95,6 +95,12 @@ public static class SettingsManager
         set => SetProperty(settings => settings with { DoubleClickEmptyAreaGoUp = value });
     }
 
+    public static bool MediaHoverPreview
+    {
+        get => Store.Snapshot.MediaHoverPreview;
+        set => SetProperty(settings => settings with { MediaHoverPreview = value });
+    }
+
     public static bool MiddleClickForegroundTab
     {
         get => Store.Snapshot.MiddleClickForegroundTab;
