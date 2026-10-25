@@ -27,6 +27,7 @@ internal sealed class ExplorerNewTabDuplicateHook : IHook
     private readonly TabStripHitTester _tabStrip;
     private readonly bool _ownsTabStrip;
     private LowLevelMouseHook? _lowLevelMouseHook;
+    private long _lastFallbackLogAt;
     private volatile bool _active;
     private bool _disposed;
 
@@ -117,11 +118,44 @@ internal sealed class ExplorerNewTabDuplicateHook : IHook
 
     private bool IsOnNewTabButton(ExplorerNewTabClick click)
     {
-        if (!_tabStrip.TryGetNewTabButton(click.Window, out var button))
+        var hasButton = _tabStrip.TryGetNewTabButton(click.Window, out var button);
+        if (hasButton)
+        {
+            // A tiny slop absorbs the 1-2px trembling seen in real clicks; the cached rect still decides.
+            button.Inflate(ButtonSlopPx, ButtonSlopPx);
+        }
+        var hasRow = _tabStrip.TryGetTabRow(click.Window, out var row);
+        var hitTab = hasRow ? _tabStrip.HitTestTab(click.Point, click.Window) : null;
+        var rightmost = _tabStrip.TryGetRightmostTabRight(click.Window);
+        var decided = IsNewTabButtonArea(hasButton, button, hasRow, row, hitTab, rightmost, click.Point);
+        if (decided && !hasButton)
+        {
+            // Debounced: the UIA button lookup missed but the field-proven guard band caught the
+            // click. Logged once per second so a persistent mismatch stays visible in the debug log.
+            var now = Environment.TickCount64;
+            if (now - _lastFallbackLogAt > 1_000)
+            {
+                _lastFallbackLogAt = now;
+                ExplorerDebugLog.Write("New-tab button: UIA rect missing, guard-band fallback matched");
+            }
+        }
+        return decided;
+    }
+
+    /// <summary>
+    /// The click is the new-tab button when it hits the cached button rectangle, or — when UIA could
+    /// not identify the button on this build — when it lands in the guard band just right of the last
+    /// tab inside the tab row. The double-click reopen hook has used that same band to exclude the
+    /// button since f12, so its width is field-proven; the band never covers a tab title.
+    /// </summary>
+    internal static bool IsNewTabButtonArea(bool hasButton, Rectangle buttonRect, bool hasRow, Rectangle row,
+        bool? hitTab, int? rightmostRight, Point point)
+    {
+        if (hasButton && buttonRect.Contains(point))
+            return true;
+        if (!hasRow || !row.Contains(point) || hitTab == true)
             return false;
-        // A tiny slop absorbs the 1-2px trembling seen in real clicks; the cached rect still decides.
-        button.Inflate(ButtonSlopPx, ButtonSlopPx);
-        return button.Contains(click.Point);
+        return rightmostRight is { } edge && point.X > edge && point.X <= edge + ExplorerTabBarEmptyDoubleClickHook.NewTabButtonGuardPx;
     }
 
     private async Task DuplicateAsync(ExplorerNewTabClick click)
