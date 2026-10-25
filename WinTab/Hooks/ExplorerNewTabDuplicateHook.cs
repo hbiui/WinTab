@@ -127,6 +127,13 @@ internal sealed class ExplorerNewTabDuplicateHook : IHook
         var effective = hasRects ? EffectiveTabRects(cachedRects, liveTabs) : [];
         // The cached button rectangle is only trustworthy when the cache matches the live layout.
         var trusted = effective.Length == cachedRects.Length;
+        // While ghosts are being trimmed, the real button has moved left of where the cache last
+        // saw the row end: the survivor tabs widen as they take the closed tab's space. Extend the
+        // guard band over the ghost area, because in that window a click there can only mean the
+        // button — the tabs it used to cover are already closed.
+        int? ghostEdge = hasRects && cachedRects.Length > effective.Length
+            ? cachedRects.Skip(effective.Length).Max(rectangle => rectangle.Right)
+            : null;
         var button = Rectangle.Empty;
         var hasButton = trusted && _tabStrip.TryGetNewTabButton(click.Window, out button);
         if (hasButton)
@@ -135,11 +142,11 @@ internal sealed class ExplorerNewTabDuplicateHook : IHook
             button.Inflate(ButtonSlopPx, ButtonSlopPx);
         }
         var hasRow = _tabStrip.TryGetTabRow(click.Window, out var row);
-        var decided = IsNewTabButtonArea(hasButton, button, hasRow, row, effective, click.Point);
-        if (!hasRects || liveTabs != cachedRects.Length)
+        var decided = IsNewTabButtonArea(hasButton, button, hasRow, row, effective, ghostEdge, click.Point);
+        if (!hasRects || liveTabs != cachedRects.Length || (!decided && hasRow))
         {
-            // A layout change the cache has not absorbed yet: refresh now so the next click decides
-            // on the current layout instead of repeating this fallback.
+            // A layout the cache has not absorbed yet, or a miss inside the row: refresh now so the
+            // next click decides on the current layout instead of repeating this fallback.
             _tabStrip.ScheduleRefresh(click.Window);
         }
         if (decided && !trusted)
@@ -173,10 +180,11 @@ internal sealed class ExplorerNewTabDuplicateHook : IHook
     /// button could not be identified on this build — when it lands in the guard band just right of
     /// the last live tab inside the tab row. The double-click reopen hook has used that same band
     /// to exclude the button since f12, so its width is field-proven; the band never covers a live
-    /// tab title.
+    /// tab title. While a ghost cache is being trimmed, the band stretches over the ghosts, because
+    /// the real button has moved into that area as the surviving tabs took over the closed space.
     /// </summary>
     internal static bool IsNewTabButtonArea(bool hasButton, Rectangle buttonRect, bool hasRow,
-        Rectangle row, IReadOnlyList<Rectangle> tabs, Point point)
+        Rectangle row, IReadOnlyList<Rectangle> tabs, int? ghostEdge, Point point)
     {
         if (hasButton && buttonRect.Contains(point))
             return true;
@@ -185,8 +193,10 @@ internal sealed class ExplorerNewTabDuplicateHook : IHook
         if (tabs.Any(rectangle => rectangle.Contains(point)))
             return false;
         int? edge = tabs.Count == 0 ? null : tabs.Max(rectangle => rectangle.Right);
-        return edge is { } right && point.X > right &&
-               point.X <= right + ExplorerTabBarEmptyDoubleClickHook.NewTabButtonGuardPx;
+        if (edge is not { } right)
+            return false;
+        var bandEnd = Math.Max(right, ghostEdge ?? right) + ExplorerTabBarEmptyDoubleClickHook.NewTabButtonGuardPx;
+        return point.X > right && point.X <= bandEnd;
     }
 
     private async Task DuplicateAsync(ExplorerNewTabClick click)

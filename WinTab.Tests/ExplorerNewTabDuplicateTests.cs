@@ -97,18 +97,24 @@ internal static class ExplorerNewTabDuplicateTests
         Point At(int x, int y) => new(x, y);
         Rectangle[] liveTabs = [new Rectangle(0, 40, 330, 42)];
 
-        Check.That(ExplorerNewTabDuplicateHook.IsNewTabButtonArea(true, rect, true, row, liveTabs, At(350, 60)),
+        Check.That(ExplorerNewTabDuplicateHook.IsNewTabButtonArea(true, rect, true, row, liveTabs, null, At(350, 60)),
             "A point inside the cached button rectangle must be the button");
-        Check.That(!ExplorerNewTabDuplicateHook.IsNewTabButtonArea(true, rect, true, row, liveTabs, At(420, 60)),
+        Check.That(!ExplorerNewTabDuplicateHook.IsNewTabButtonArea(true, rect, true, row, liveTabs, null, At(420, 60)),
             "A point outside both the rectangle and the guard band must not be the button");
-        Check.That(ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true, row, liveTabs, At(350, 60)),
+        Check.That(ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true, row, liveTabs, null, At(350, 60)),
             "Without a UIA rectangle, the guard band right of the last tab must decide the button");
-        Check.That(!ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true, row, liveTabs, At(420, 60)),
+        Check.That(!ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true, row, liveTabs, null, At(420, 60)),
             "The open empty area beyond the guard band must stay native");
-        Check.That(!ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true, row, liveTabs, At(300, 60)),
+        Check.That(!ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true, row, liveTabs, null, At(300, 60)),
             "A point on a live tab title must never count as the button");
-        Check.That(!ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, false, default, [], At(350, 60)),
+        Check.That(!ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, false, default, [], null, At(350, 60)),
             "A cold cache must fail closed");
+        Check.That(ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true, row, liveTabs, 554, At(350, 60)),
+            "While ghosts are trimmed, the band must stretch over the ghost area the button moved into");
+        Check.That(ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true, row, liveTabs, 554, At(560, 60)),
+            "The stretched band must extend past the ghost right edge plus the guard width");
+        Check.That(!ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true, row, liveTabs, 554, At(700, 60)),
+            "The stretched band must stop at the ghost right edge plus the guard width");
         return Task.CompletedTask;
     }
 
@@ -128,10 +134,10 @@ internal static class ExplorerNewTabDuplicateTests
         Check.Equal(2, untouched.Length, "An unknown live count must keep the cache untouched");
         Check.Equal(first, untouched[0], "The unknown-count pass-through must preserve order");
         Check.That(ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true,
-            new Rectangle(0, 40, 800, 42), ExplorerNewTabDuplicateHook.EffectiveTabRects([first, ghost], 1), At(350, 60)),
+            new Rectangle(0, 40, 800, 42), ExplorerNewTabDuplicateHook.EffectiveTabRects([first, ghost], 1), null, At(350, 60)),
             "A click on the button must be recognized while a ghost tab still covers it");
         Check.That(!ExplorerNewTabDuplicateHook.IsNewTabButtonArea(false, default, true,
-            new Rectangle(0, 40, 800, 42), [first, ghost], At(350, 60)),
+            new Rectangle(0, 40, 800, 42), [first, ghost], null, At(350, 60)),
             "Without trimming, the ghost must reject the click exactly like the f15 bug did");
         return Task.CompletedTask;
     }
