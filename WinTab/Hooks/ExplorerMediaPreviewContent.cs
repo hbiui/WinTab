@@ -126,7 +126,10 @@ internal static class ExplorerMediaPreviewContent
             if (!info.Exists || info.Length == 0)
                 return null;
 
-            var thumbnail = kind == MediaPreviewKind.Video ? null : ShellItemFactory.GetThumbnailBitmap(path, ThumbnailSize);
+            // Audio skips the Shell thumbnail request entirely: extracting the icon/cover on a fresh
+            // STA thread takes long enough that the first hovers feel dead, and playback is the point
+            // of an audio card. Images keep the real thumbnail; video never fetches one.
+            var thumbnail = kind == MediaPreviewKind.Image ? ShellItemFactory.GetThumbnailBitmap(path, ThumbnailSize) : null;
             BitmapSource? source = null;
             if (thumbnail is { } handle)
             {

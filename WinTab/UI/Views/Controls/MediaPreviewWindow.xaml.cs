@@ -111,6 +111,8 @@ public partial class MediaPreviewWindow : Window, IExplorerPreviewWindow
         if (preview.HasThumbnail && !video)
             PreviewImage.Source = preview.Thumbnail;
         FallbackText.Visibility = preview.HasThumbnail || video ? Visibility.Collapsed : Visibility.Visible;
+        if (!preview.HasThumbnail && !video)
+            FallbackText.Text = "♪"; // audio card without a cover: playback is the point
         TextScroll.Visibility = Visibility.Collapsed;
         ControlsBar.Visibility = Visibility.Visible;
         Player.Visibility = video ? Visibility.Visible : Visibility.Hidden;

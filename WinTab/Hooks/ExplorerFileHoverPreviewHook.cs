@@ -18,6 +18,10 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
 {
     internal const int DwellTicksToIdentify = 3;   // ~300 ms: cheap cursor polling only
     internal const int DwellTicksToShow = 6;       // ~600 ms: the user's chosen threshold
+    internal const int MoveTolerancePx = 2;        // sub-2px hand tremor must not restart the dwell
+
+    private static bool IsNearSamePosition(Point a, Point b) =>
+        Math.Abs(a.X - b.X) <= MoveTolerancePx && Math.Abs(a.Y - b.Y) <= MoveTolerancePx;
 
     private readonly object _gate = new();
     private readonly ExplorerWatcher _watcher;
@@ -144,7 +148,7 @@ internal sealed class ExplorerFileHoverPreviewHook : IHook
             var point = _cursor();
             lock (_gate)
             {
-                if (point == _point)
+                if (IsNearSamePosition(point, _point))
                 {
                     _stableTicks++;
                     AdvanceDwellLocked();
