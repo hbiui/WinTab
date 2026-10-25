@@ -15,8 +15,8 @@
         <Company>$(AssemblyName)</Company>
         <Description>WinTab keeps File Explorer folders in tabs and fixes Explorer window redirection issues on Windows 11.</Description>
         <Copyright>Copyright (c) 2026 OUBIGFA</Copyright>
-        <PackageProjectUrl>https://github.com/OUBIGFA/WinTab</PackageProjectUrl>
-        <RepositoryUrl>https://github.com/OUBIGFA/WinTab</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/hbiui/WinTab</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/hbiui/WinTab</RepositoryUrl>
         <SatelliteResourceLanguages>zh</SatelliteResourceLanguages>
         <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     </PropertyGroup>
