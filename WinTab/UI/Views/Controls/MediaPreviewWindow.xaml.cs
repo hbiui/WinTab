@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -109,9 +111,31 @@ public partial class MediaPreviewWindow : Window, IExplorerPreviewWindow
         ControlsBar.Visibility = Visibility.Visible;
         Player.Visibility = video ? Visibility.Visible : Visibility.Hidden;
         Player.IsMuted = _muted;
-        Player.Source = new Uri(preview.FilePath);
+        Player.Source = BuildFileUri(preview.FilePath);
         Player.Play();
         PlayPauseButton.Content = "⏸";
+    }
+
+    /// <summary>
+    /// Builds a fully escaped file URI. A raw new Uri(path) parses '#' as a fragment and '%' as an
+    /// escape, so any file whose name contains those characters would fail as "download failed".
+    /// </summary>
+    private static Uri? BuildFileUri(string path)
+    {
+        try
+        {
+            var full = Path.GetFullPath(path).Replace('\\', '/');
+            var slash = full.IndexOf('/') + 1;
+            var drive = full.Substring(0, slash);
+            var rest = full.Substring(slash);
+            var escaped = string.Join("/", rest.Split('/').Select(Uri.EscapeDataString));
+            return new Uri(drive + escaped, UriKind.Absolute);
+        }
+        catch (Exception exception)
+        {
+            WinTab.Hooks.ExplorerDebugLog.Write($"Preview source build failed: {exception.GetType().Name}:{exception.Message}");
+            return null;
+        }
     }
 
     private void ShowText(ExplorerMediaPreview preview)
@@ -155,7 +179,7 @@ public partial class MediaPreviewWindow : Window, IExplorerPreviewWindow
 
     private void Player_MediaFailed(object sender, ExceptionRoutedEventArgs e)
     {
-        WinTab.Hooks.ExplorerDebugLog.Write($"Preview playback failed: {e.ErrorException?.Message}");
+        WinTab.Hooks.ExplorerDebugLog.Write($"Preview playback failed: {e.ErrorException?.Message} source={Player.Source}");
         Hide();
     }
 

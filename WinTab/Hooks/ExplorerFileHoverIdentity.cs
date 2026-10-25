@@ -76,6 +76,19 @@ internal static class ExplorerFileHoverIdentity
         for (var depth = 0; current != null && depth < 64; depth++)
         {
             var properties = current.Current;
+            if (properties.ControlType == ControlType.Edit)
+            {
+                // Win11 renders every details-view cell as an Edit("UIProperty") placeholder, so a
+                // hover on the name column lands here first. Only a live rename (keyboard focus
+                // inside the box) is interactive chrome; otherwise keep walking up to the item.
+                if (properties.HasKeyboardFocus)
+                    return null;
+            }
+            else if (IsChrome(properties.ControlType))
+            {
+                return null;
+            }
+
             switch (properties.ControlType)
             {
                 case var type when type == ControlType.ListItem || type == ControlType.DataItem:
@@ -83,8 +96,6 @@ internal static class ExplorerFileHoverIdentity
                     if (string.IsNullOrWhiteSpace(name))
                         return null;
                     return ReachableView(current, viewHandle) ? name : null;
-                case var type when IsChrome(type):
-                    return null;
             }
 
             if (properties.NativeWindowHandle == viewHandle)

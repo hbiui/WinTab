@@ -117,6 +117,10 @@ internal static class ExplorerMediaPreviewContent
                 {
                     source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
                         handle, nint.Zero, System.Windows.Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+                    // Shell thumbnails often carry an all-zero alpha channel; WPF would then paint the
+                    // card fully transparent ("empty" card). Drop alpha so the picture is always opaque.
+                    source = new System.Windows.Media.Imaging.FormatConvertedBitmap(
+                        source, System.Windows.Media.PixelFormats.Bgr32, null, 0);
                     source.Freeze();
                 }
                 finally
