@@ -286,6 +286,15 @@
                                 </Border>
                                 <Border Style="{StaticResource SettingRowStyle}">
                                     <DockPanel>
+                                        <CheckBox x:Name="DoubleClickEmptyTabBarReopenToggle" DockPanel.Dock="Right" Style="{StaticResource SettingToggleStyle}" />
+                                        <StackPanel>
+                                            <TextBlock x:Name="DoubleClickEmptyTabBarReopenTitleText" Text="Double-click empty tab bar to reopen" Style="{StaticResource SettingTitleStyle}" />
+                                            <TextBlock x:Name="DoubleClickEmptyTabBarReopenDescText" Text="Double-click an empty area of the tab bar to reopen the most recently closed tab" Style="{StaticResource SettingDescriptionStyle}" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
+                                <Border Style="{StaticResource SettingRowStyle}">
+                                    <DockPanel>
                                         <CheckBox x:Name="MiddleClickForegroundToggle" DockPanel.Dock="Right" Style="{StaticResource SettingToggleStyle}" />
                                         <StackPanel>
                                             <TextBlock x:Name="MiddleClickTitleText" Text="Open middle-clicked tabs in foreground" Style="{StaticResource SettingTitleStyle}" />

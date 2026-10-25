@@ -17,6 +17,7 @@ type Settings struct {
 	DoubleClickCloseIncludeNotepad bool   `json:"doubleClickCloseIncludeNotepad"`
 	DoubleClickEmptyAreaGoUp       bool   `json:"doubleClickEmptyAreaGoUp"`
 	MediaHoverPreview              bool   `json:"mediaHoverPreview"`
+	DoubleClickEmptyTabBarReopen   bool   `json:"doubleClickEmptyTabBarReopen"`
 	MiddleClickForegroundTab       bool   `json:"middleClickForegroundTab"`
 	WheelSwitchTab                 bool   `json:"wheelSwitchTab"`
 	WheelSwitchSensitivity         string `json:"wheelSwitchSensitivity"`

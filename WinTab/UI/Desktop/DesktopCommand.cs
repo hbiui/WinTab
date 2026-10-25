@@ -47,7 +47,7 @@ internal sealed record DesktopCommand(long Id, string Method)
                     "windowHook" or "reuseTabs" or "restoreTabs" or "restoreSingleTab" or
                     "restoreOnAnyFolder" or "reopenClosedTab" or "doubleClickCloseTab" or
                     "doubleClickCloseIncludeNotepad" or "doubleClickEmptyAreaGoUp" or
-                    "mediaHoverPreview" or
+                    "mediaHoverPreview" or "doubleClickEmptyTabBarReopen" or
                     "middleClickForegroundTab" or "wheelSwitchTab" or
                     "showTrayIcon" or "autoUpdate" or "startup" => command with { Enabled = Bool(args, "value") },
                     "language" => command with { Text = Choice(args, "value", "zh-CN", "en-US") },

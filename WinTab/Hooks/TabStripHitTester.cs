@@ -55,6 +55,14 @@ internal sealed class TabStripHitTester : IDisposable
         return true;
     }
 
+    /// <summary>The right edge of the rightmost tab, for guarding the new-tab button area; null while unknown.</summary>
+    public int? TryGetRightmostTabRight(nint explorerWindow)
+    {
+        if (!TryGetWindowRect(explorerWindow, out var windowRect) || !TryGetBounds(explorerWindow, windowRect, out var bounds))
+            return null;
+        return bounds.TabRects.Length == 0 ? null : bounds.TabRects.Max(rectangle => rectangle.Right);
+    }
+
     /// <summary>Resolves a cold hit test off the input hook without discarding the gesture that requested it.</summary>
     public async Task<DrawingRectangle?> GetTabRowAsync(nint explorerWindow, CancellationToken cancellationToken)
     {

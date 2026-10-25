@@ -32,6 +32,10 @@ func TestWireState(t *testing.T) {
 		t.Fatal("hover media preview default was lost")
 		t.Fatalf("wire defaults lost: %#v", state)
 	}
+	if !state.Settings.DoubleClickEmptyTabBarReopen {
+		t.Fatal("double-click empty tab-bar reopen default was lost")
+		t.Fatalf("wire defaults lost: %#v", state)
+	}
 }
 
 func TestBridgeRoutesRepliesAndEvents(t *testing.T) {

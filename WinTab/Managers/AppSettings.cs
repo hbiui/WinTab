@@ -29,6 +29,8 @@ internal sealed record AppSettings
     public bool DoubleClickEmptyAreaGoUp { get; init; } = true;
     /// <summary>Show a preview card when the cursor dwells on a media file in the file list.</summary>
     public bool MediaHoverPreview { get; init; } = true;
+    /// <summary>Double-click an empty tab-bar area to reopen the most recently closed tab.</summary>
+    public bool DoubleClickEmptyTabBarReopen { get; init; } = true;
     public bool MiddleClickForegroundTab { get; init; } = true;
     public bool WheelSwitchTab { get; init; } = true;
     public string WheelSwitchSensitivity { get; init; } = "Medium";

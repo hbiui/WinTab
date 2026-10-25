@@ -172,6 +172,7 @@ internal sealed class DesktopApplication : IApplicationUi, IDisposable
             case "doubleClickCloseIncludeNotepad": _hooks.SetDoubleClickCloseIncludeNotepad(enabled); break;
             case "doubleClickEmptyAreaGoUp": _hooks.SetDoubleClickEmptyAreaGoUp(enabled); break;
             case "mediaHoverPreview": _hooks.SetMediaHoverPreview(enabled); break;
+            case "doubleClickEmptyTabBarReopen": _hooks.SetDoubleClickEmptyTabBarReopen(enabled); break;
             case "middleClickForegroundTab": _hooks.SetMiddleClickForeground(enabled); break;
             case "wheelSwitchTab": _hooks.SetWheelSwitch(enabled); break;
             case "wheelSwitchSensitivity": _hooks.SetWheelSwitchSensitivity(Enum.Parse<WheelSwitchSensitivity>(command.Text)); break;

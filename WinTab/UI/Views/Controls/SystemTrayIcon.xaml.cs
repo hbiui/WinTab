@@ -38,6 +38,7 @@ public partial class SystemTrayIcon : UserControl, IDisposable
         DoubleClickCloseMenu.Click += (_, _) => _hookManager.SetDoubleClickClose(DoubleClickCloseMenu.IsChecked);
         DoubleClickEmptyAreaGoUpMenu.Click += (_, _) => _hookManager.SetDoubleClickEmptyAreaGoUp(DoubleClickEmptyAreaGoUpMenu.IsChecked);
         MediaHoverPreviewMenu.Click += (_, _) => _hookManager.SetMediaHoverPreview(MediaHoverPreviewMenu.IsChecked);
+        DoubleClickEmptyTabBarReopenMenu.Click += (_, _) => _hookManager.SetDoubleClickEmptyTabBarReopen(DoubleClickEmptyTabBarReopenMenu.IsChecked);
         MiddleClickForegroundMenu.Click += (_, _) => _hookManager.SetMiddleClickForeground(MiddleClickForegroundMenu.IsChecked);
         WheelSwitchMenu.Click += (_, _) => _hookManager.SetWheelSwitch(WheelSwitchMenu.IsChecked);
         RestoreGroupMenu.Click += async (_, _) => await _hookManager.ExecuteSessionCommandAsync(true);
@@ -64,6 +65,7 @@ public partial class SystemTrayIcon : UserControl, IDisposable
         DoubleClickCloseMenu.Header = UiStrings.TrayDoubleClickClose;
         DoubleClickEmptyAreaGoUpMenu.Header = UiStrings.TrayDoubleClickEmptyAreaGoUp;
         MediaHoverPreviewMenu.Header = UiStrings.TrayMediaHoverPreview;
+        DoubleClickEmptyTabBarReopenMenu.Header = UiStrings.TrayDoubleClickEmptyTabBarReopen;
         MiddleClickForegroundMenu.Header = UiStrings.TrayMiddleClickForeground;
         WheelSwitchMenu.Header = UiStrings.TrayWheelSwitch;
         RestoreGroupMenu.Header = UiStrings.RestoreGroupCommand;
@@ -84,6 +86,7 @@ public partial class SystemTrayIcon : UserControl, IDisposable
         DoubleClickCloseMenu.IsChecked = SettingsManager.DoubleClickCloseTab;
         DoubleClickEmptyAreaGoUpMenu.IsChecked = SettingsManager.DoubleClickEmptyAreaGoUp;
         MediaHoverPreviewMenu.IsChecked = SettingsManager.MediaHoverPreview;
+        DoubleClickEmptyTabBarReopenMenu.IsChecked = SettingsManager.DoubleClickEmptyTabBarReopen;
         MiddleClickForegroundMenu.IsChecked = SettingsManager.MiddleClickForegroundTab;
         WheelSwitchMenu.IsChecked = SettingsManager.WheelSwitchTab;
         RestoreGroupMenu.IsEnabled = _hookManager.IsShellReady;

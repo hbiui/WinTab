@@ -15,6 +15,7 @@ export interface Settings {
   doubleClickCloseIncludeNotepad: boolean
   doubleClickEmptyAreaGoUp: boolean
   mediaHoverPreview: boolean
+  doubleClickEmptyTabBarReopen: boolean
   middleClickForegroundTab: boolean
   wheelSwitchTab: boolean
   wheelSwitchSensitivity: 'Low' | 'Medium' | 'High'

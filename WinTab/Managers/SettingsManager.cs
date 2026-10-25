@@ -101,6 +101,12 @@ public static class SettingsManager
         set => SetProperty(settings => settings with { MediaHoverPreview = value });
     }
 
+    public static bool DoubleClickEmptyTabBarReopen
+    {
+        get => Store.Snapshot.DoubleClickEmptyTabBarReopen;
+        set => SetProperty(settings => settings with { DoubleClickEmptyTabBarReopen = value });
+    }
+
     public static bool MiddleClickForegroundTab
     {
         get => Store.Snapshot.MiddleClickForegroundTab;
