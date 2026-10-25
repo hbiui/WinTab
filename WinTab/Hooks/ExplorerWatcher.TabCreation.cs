@@ -127,7 +127,7 @@ public partial class ExplorerWatcher
                 _toOpenWindowsLock.Release();
         }
     }
-    private async Task<bool> OpenTabNavigateWithSelection(WindowRecord windowToOpen, nint windowHandle = 0)
+    private async Task<bool> OpenTabNavigateWithSelection(WindowRecord windowToOpen, nint windowHandle = 0, bool allowReuse = true)
     {
         if (ExplorerLocationPolicy.IsControlPanel(windowToOpen.Location))
             return false;
@@ -154,7 +154,9 @@ public partial class ExplorerWatcher
             {
                 EnsureCurrentMerge();
                 ExplorerDebugLog.Write($"OpenTab lock target={windowToOpen.Location}");
-                if (_reuseTabs && TrackedWindowCount > 0 && !string.IsNullOrWhiteSpace(windowToOpen.Location))
+                // Reuse is off for duplicating a tab: the copy must be real even when the location is
+                // already open — the active tab itself would otherwise just be selected again.
+                if (allowReuse && _reuseTabs && TrackedWindowCount > 0 && !string.IsNullOrWhiteSpace(windowToOpen.Location))
                 {
                     if (TrySearchForTab(windowToOpen.Location, windowToOpen.Handle, out var existingTab, out var existingWindow))
                     {

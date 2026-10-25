@@ -63,6 +63,8 @@ internal static class UiStrings
     public static string MediaHoverPreviewDescription => Pick("鼠标停留在媒体文件上时，弹出图片、视频、音频或文本预览", "Show an image, video, audio or text preview when the cursor rests on a media file");
     public static string DoubleClickEmptyTabBarReopenTitle => Pick("双击空白标签栏重新打开标签", "Double-click empty tab bar to reopen");
     public static string DoubleClickEmptyTabBarReopenDescription => Pick("双击标签栏空白区域，重新打开最近关闭的标签页", "Double-click an empty area of the tab bar to reopen the most recently closed tab");
+    public static string NewTabDuplicateCurrentTitle => Pick("新标签复制当前标签页", "New tab duplicates current tab");
+    public static string NewTabDuplicateCurrentDescription => Pick("点击标签栏上的加号时，直接复制当前活动的标签页，而不是打开主页", "Clicking the plus button duplicates the active tab instead of opening the default page");
     public static string MiddleClickTitle => Pick("中键前台打开标签页", "Open middle-clicked tabs in foreground");
     public static string MiddleClickDescription => Pick("中键点击侧边栏、文件列表或主页中的文件夹时，新标签一律在前台打开", "Open folders middle-clicked in the navigation pane, file list or Home in the foreground instead of the background");
     public static string WheelSwitchTitle => Pick("滚轮切换标签页", "Scroll to switch tabs");
@@ -92,6 +94,7 @@ internal static class UiStrings
         HookFeature.DoubleClickEmptyAreaGoUp => DoubleClickEmptyAreaGoUpTitle,
         HookFeature.MediaHoverPreview => MediaHoverPreviewTitle,
         HookFeature.DoubleClickEmptyTabBarReopen => DoubleClickEmptyTabBarReopenTitle,
+        HookFeature.NewTabDuplicateCurrent => NewTabDuplicateCurrentTitle,
         HookFeature.MiddleClickForeground => MiddleClickTitle,
         HookFeature.WheelSwitch => WheelSwitchTitle,
         _ => throw new ArgumentOutOfRangeException(nameof(feature), feature, null)
@@ -162,6 +165,7 @@ internal static class UiStrings
     public static string TrayDoubleClickEmptyAreaGoUp => Pick("双击空白处返回上一级", "Double-click empty space to go up");
     public static string TrayMediaHoverPreview => Pick("悬浮媒体预览", "Hover media preview");
     public static string TrayDoubleClickEmptyTabBarReopen => Pick("双击空白标签栏重新打开标签", "Double-click empty tab bar to reopen");
+    public static string TrayNewTabDuplicateCurrent => Pick("新标签复制当前标签页", "New tab duplicates current tab");
     public static string TrayMiddleClickForeground => Pick("中键前台打开标签页", "Open middle-clicked tabs in foreground");
     public static string TrayWheelSwitch => Pick("滚轮切换标签页", "Scroll to switch tabs");
     public static string TrayStartup => Pick("开机启动", "Start with Windows");

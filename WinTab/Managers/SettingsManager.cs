@@ -107,6 +107,12 @@ public static class SettingsManager
         set => SetProperty(settings => settings with { DoubleClickEmptyTabBarReopen = value });
     }
 
+    public static bool NewTabDuplicateCurrent
+    {
+        get => Store.Snapshot.NewTabDuplicateCurrent;
+        set => SetProperty(settings => settings with { NewTabDuplicateCurrent = value });
+    }
+
     public static bool MiddleClickForegroundTab
     {
         get => Store.Snapshot.MiddleClickForegroundTab;

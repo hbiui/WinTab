@@ -9,7 +9,7 @@ using WinTab.UI.Localization;
 namespace WinTab.Managers;
 
 /// <summary>A setting that is carried out by an input or window hook, which can fail to start or stop.</summary>
-public enum HookFeature { MergeWindows, DoubleClickClose, DoubleClickEmptyAreaGoUp, MediaHoverPreview, DoubleClickEmptyTabBarReopen, MiddleClickForeground, WheelSwitch }
+public enum HookFeature { MergeWindows, DoubleClickClose, DoubleClickEmptyAreaGoUp, MediaHoverPreview, DoubleClickEmptyTabBarReopen, NewTabDuplicateCurrent, MiddleClickForeground, WheelSwitch }
 
 /// <summary>
 /// Single owner of the hook on/off state: every UI surface calls the Set* methods here, which
@@ -25,6 +25,7 @@ public sealed class HookManager : IDisposable
     private readonly ExplorerFileListDoubleClickHook _fileListDoubleClickHook;
     private readonly ExplorerFileHoverPreviewHook _hoverPreviewHook;
     private readonly ExplorerTabBarEmptyDoubleClickHook _tabBarReopenHook;
+    private readonly ExplorerNewTabDuplicateHook _newTabDuplicateHook;
     private readonly ExplorerTabWheelSwitchHook _wheelSwitchHook;
     private readonly IExplorerSessionShortcutHook _sessionShortcuts;
     private readonly System.Windows.SessionEndingCancelEventHandler _sessionEndingHandler;
@@ -52,6 +53,7 @@ public sealed class HookManager : IDisposable
         _fileListDoubleClickHook = new ExplorerFileListDoubleClickHook(_navigationInput, _explorerWatcher);
         _hoverPreviewHook = new ExplorerFileHoverPreviewHook(_navigationInput, _explorerWatcher);
         _tabBarReopenHook = new ExplorerTabBarEmptyDoubleClickHook(_explorerWatcher);
+        _newTabDuplicateHook = new ExplorerNewTabDuplicateHook(_explorerWatcher);
         _wheelSwitchHook = new ExplorerTabWheelSwitchHook(_explorerWatcher, () => SettingsManager.WheelSwitchSensitivity);
         _sessionShortcuts = new ExplorerSessionShortcutHook(action => _ = ExecuteSessionCommandAsync(action == SessionAction.RestoreGroup));
         _sessionShortcuts.Failed += message =>
@@ -86,6 +88,7 @@ public sealed class HookManager : IDisposable
         (HookFeature.DoubleClickEmptyAreaGoUp, SettingsManager.DoubleClickEmptyAreaGoUp, _fileListDoubleClickHook),
         (HookFeature.MediaHoverPreview, SettingsManager.MediaHoverPreview, _hoverPreviewHook),
         (HookFeature.DoubleClickEmptyTabBarReopen, SettingsManager.DoubleClickEmptyTabBarReopen, _tabBarReopenHook),
+        (HookFeature.NewTabDuplicateCurrent, SettingsManager.NewTabDuplicateCurrent, _newTabDuplicateHook),
         (HookFeature.MiddleClickForeground, SettingsManager.MiddleClickForegroundTab, _middleClickHook),
         (HookFeature.WheelSwitch, SettingsManager.WheelSwitchTab, _wheelSwitchHook)
     ]);
@@ -106,6 +109,7 @@ public sealed class HookManager : IDisposable
         SetDoubleClickEmptyAreaGoUp(SettingsManager.DoubleClickEmptyAreaGoUp);
         SetMediaHoverPreview(SettingsManager.MediaHoverPreview);
         SetDoubleClickEmptyTabBarReopen(SettingsManager.DoubleClickEmptyTabBarReopen);
+        SetNewTabDuplicateCurrent(SettingsManager.NewTabDuplicateCurrent);
         SetMiddleClickForeground(SettingsManager.MiddleClickForegroundTab);
         SetWheelSwitch(SettingsManager.WheelSwitchTab);
     }
@@ -284,6 +288,13 @@ public sealed class HookManager : IDisposable
         RaiseStateChanged();
     }
 
+    public void SetNewTabDuplicateCurrent(bool enabled)
+    {
+        SettingsManager.NewTabDuplicateCurrent = enabled;
+        TryChangeHookStatus(_newTabDuplicateHook, enabled);
+        RaiseStateChanged();
+    }
+
     public void SetMiddleClickForeground(bool enabled)
     {
         SettingsManager.MiddleClickForegroundTab = enabled;
@@ -355,6 +366,7 @@ public sealed class HookManager : IDisposable
         _fileListDoubleClickHook.Dispose();
         _hoverPreviewHook.Dispose();
         _tabBarReopenHook.Dispose();
+        _newTabDuplicateHook.Dispose();
         _middleClickHook.Dispose();
         _navigationInput.Dispose();
         _doubleClickHook.Dispose();

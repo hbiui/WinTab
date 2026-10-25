@@ -18,6 +18,7 @@ type Settings struct {
 	DoubleClickEmptyAreaGoUp       bool   `json:"doubleClickEmptyAreaGoUp"`
 	MediaHoverPreview              bool   `json:"mediaHoverPreview"`
 	DoubleClickEmptyTabBarReopen   bool   `json:"doubleClickEmptyTabBarReopen"`
+	NewTabDuplicateCurrent         bool   `json:"newTabDuplicateCurrent"`
 	MiddleClickForegroundTab       bool   `json:"middleClickForegroundTab"`
 	WheelSwitchTab                 bool   `json:"wheelSwitchTab"`
 	WheelSwitchSensitivity         string `json:"wheelSwitchSensitivity"`

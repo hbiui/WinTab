@@ -23,7 +23,8 @@ internal sealed class TabStripHitTester : IDisposable
         _boundsCache = new(window => ComputeBounds(window, readTabs));
 
     /// <param name="TabRow">The band of the window that holds the tab titles, including the space beside them.</param>
-    private sealed record TabStripBounds(DrawingRectangle[] TabRects, DrawingRectangle TabRow, RECT WindowRect, long RefreshedAt, WindowIdentity Identity);
+    /// <param name="NewTabButton">The new-tab button rectangle, or null when this pass did not find it.</param>
+    private sealed record TabStripBounds(DrawingRectangle[] TabRects, DrawingRectangle TabRow, DrawingRectangle? NewTabButton, RECT WindowRect, long RefreshedAt, WindowIdentity Identity);
 
     /// <summary>Whether the point is on one of the window's tab titles.</summary>
     public bool IsPointOnTabStrip(DrawingPoint screenPoint, nint explorerWindow) =>
@@ -61,6 +62,18 @@ internal sealed class TabStripHitTester : IDisposable
         if (!TryGetWindowRect(explorerWindow, out var windowRect) || !TryGetBounds(explorerWindow, windowRect, out var bounds))
             return null;
         return bounds.TabRects.Length == 0 ? null : bounds.TabRects.Max(rectangle => rectangle.Right);
+    }
+
+    /// <summary>The new-tab button rectangle, for hooks that must recognize a click on it; false while unknown.</summary>
+    public bool TryGetNewTabButton(nint explorerWindow, out DrawingRectangle button)
+    {
+        button = DrawingRectangle.Empty;
+        if (!TryGetWindowRect(explorerWindow, out var windowRect) || !TryGetBounds(explorerWindow, windowRect, out var bounds))
+            return false;
+        if (bounds.NewTabButton is not { } rectangle)
+            return false;
+        button = rectangle;
+        return true;
     }
 
     /// <summary>Resolves a cold hit test off the input hook without discarding the gesture that requested it.</summary>
@@ -136,6 +149,11 @@ internal sealed class TabStripHitTester : IDisposable
 
         var tabRow = DrawingRectangle.FromLTRB(finalRect.Left, tabRects.Min(rectangle => rectangle.Top),
             finalRect.Right, tabRects.Max(rectangle => rectangle.Bottom));
-        return new TabStripBounds(tabRects.ToArray(), tabRow, finalRect, Environment.TickCount64, identity);
+        DrawingRectangle? newTabButton = null;
+        if (ExplorerTabAutomation.TryReadNewTabButton(explorerWindow, out var buttonBounds) &&
+            !buttonBounds.IsEmpty && buttonBounds.Width >= 8 && buttonBounds.Height >= 8)
+            newTabButton = new DrawingRectangle((int)buttonBounds.X, (int)buttonBounds.Y,
+                (int)buttonBounds.Width, (int)buttonBounds.Height);
+        return new TabStripBounds(tabRects.ToArray(), tabRow, newTabButton, finalRect, Environment.TickCount64, identity);
     }
 }

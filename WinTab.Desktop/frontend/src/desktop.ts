@@ -16,6 +16,7 @@ export interface Settings {
   doubleClickEmptyAreaGoUp: boolean
   mediaHoverPreview: boolean
   doubleClickEmptyTabBarReopen: boolean
+  newTabDuplicateCurrent: boolean
   middleClickForegroundTab: boolean
   wheelSwitchTab: boolean
   wheelSwitchSensitivity: 'Low' | 'Medium' | 'High'

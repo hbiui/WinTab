@@ -295,6 +295,15 @@
                                 </Border>
                                 <Border Style="{StaticResource SettingRowStyle}">
                                     <DockPanel>
+                                        <CheckBox x:Name="NewTabDuplicateCurrentToggle" DockPanel.Dock="Right" Style="{StaticResource SettingToggleStyle}" />
+                                        <StackPanel>
+                                            <TextBlock x:Name="NewTabDuplicateCurrentTitleText" Text="New tab duplicates current tab" Style="{StaticResource SettingTitleStyle}" />
+                                            <TextBlock x:Name="NewTabDuplicateCurrentDescText" Text="Clicking the plus button duplicates the active tab instead of opening the default page" Style="{StaticResource SettingDescriptionStyle}" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
+                                <Border Style="{StaticResource SettingRowStyle}">
+                                    <DockPanel>
                                         <CheckBox x:Name="MiddleClickForegroundToggle" DockPanel.Dock="Right" Style="{StaticResource SettingToggleStyle}" />
                                         <StackPanel>
                                             <TextBlock x:Name="MiddleClickTitleText" Text="Open middle-clicked tabs in foreground" Style="{StaticResource SettingTitleStyle}" />

@@ -50,10 +50,14 @@ public partial class ExplorerWatcher
     public Task<SessionCommandResult> ReopenClosedTabAsync() =>
         RunSessionCommandAsync("reopen-tab", ReopenClosedTabCoreAsync);
 
+    /// <summary>Opens a copy of the window's active tab next to it; the user kept clicking the new-tab button.</summary>
+    public Task<SessionCommandResult> DuplicateActiveTabAsync(nint window) =>
+        RunSessionCommandAsync("duplicate-tab", token => DuplicateActiveTabCoreAsync(window, token), requireCaptureSessions: false);
+
     private async Task<SessionCommandResult> RunSessionCommandAsync(string name,
-        Func<CancellationToken, Task<SessionCommandResult>> command)
+        Func<CancellationToken, Task<SessionCommandResult>> command, bool requireCaptureSessions = true)
     {
-        if (_disposed || !_captureSessions || !IsShellReady)
+        if (_disposed || (requireCaptureSessions && !_captureSessions) || !IsShellReady)
             return SessionCommandResult.NotReady;
         if (Interlocked.CompareExchange(ref _sessionCommandsInProgress, 1, 0) != 0)
             return SessionCommandResult.Busy;
@@ -246,6 +250,43 @@ public partial class ExplorerWatcher
         try
         {
             return await OpenTabNavigateWithSelection(new WindowRecord(closed.Location), target);
+        }
+        finally
+        {
+            _currentMerge.Value = previous;
+        }
+    }
+
+    /// <summary>
+    /// Opens the clicked window's active tab again as a new tab of the same window. The location comes
+    /// from the tracked browser of the active tab handle; reuse is off so the copy is real even when the
+    /// user lets WinTab reuse tabs. The same single-flight budget guards it as the other session commands.
+    /// </summary>
+    private async Task<SessionCommandResult> DuplicateActiveTabCoreAsync(nint window, CancellationToken token)
+    {
+        var tabHandle = GetActiveTabHandle(window);
+        var browser = tabHandle != 0 ? GetWindowByTabHandle(tabHandle, window) : null;
+        if (browser == null)
+        {
+            ExplorerDebugLog.Write($"Duplicate tab found no active tracked browser hwnd={window}");
+            return SessionCommandResult.Failed;
+        }
+        var location = TryGetLocation(browser);
+        if (string.IsNullOrWhiteSpace(location) || ExplorerLocationPolicy.IsControlPanel(location))
+        {
+            ExplorerDebugLog.Write($"Duplicate tab refused location={location} hwnd={window}");
+            return SessionCommandResult.Failed;
+        }
+        ExplorerDebugLog.Write($"Duplicate tab location={location} hwnd={window}");
+        var previous = _currentMerge.Value;
+        using var operation = new MergeOperation(WindowIdentity.Capture(window), _hookGeneration, token,
+            () => !_disposed, ReopenTabBudgetMs);
+        _currentMerge.Value = operation;
+        try
+        {
+            return await OpenTabNavigateWithSelection(new WindowRecord(location), window, allowReuse: false)
+                ? SessionCommandResult.Completed
+                : SessionCommandResult.Failed;
         }
         finally
         {

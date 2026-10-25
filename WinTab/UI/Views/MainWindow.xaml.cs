@@ -76,6 +76,7 @@ public partial class MainWindow : Window, WinTab.UI.Desktop.IApplicationUi
         DoubleClickEmptyAreaGoUpToggle.Click += (_, _) => _hookManager.SetDoubleClickEmptyAreaGoUp(DoubleClickEmptyAreaGoUpToggle.IsChecked == true);
         MediaHoverPreviewToggle.Click += (_, _) => _hookManager.SetMediaHoverPreview(MediaHoverPreviewToggle.IsChecked == true);
         DoubleClickEmptyTabBarReopenToggle.Click += (_, _) => _hookManager.SetDoubleClickEmptyTabBarReopen(DoubleClickEmptyTabBarReopenToggle.IsChecked == true);
+        NewTabDuplicateCurrentToggle.Click += (_, _) => _hookManager.SetNewTabDuplicateCurrent(NewTabDuplicateCurrentToggle.IsChecked == true);
         MiddleClickForegroundToggle.Click += (_, _) => _hookManager.SetMiddleClickForeground(MiddleClickForegroundToggle.IsChecked == true);
         WheelSwitchToggle.Click += (_, _) => _hookManager.SetWheelSwitch(WheelSwitchToggle.IsChecked == true);
         WheelSensitivityLow.Click += (_, _) => _hookManager.SetWheelSwitchSensitivity(WheelSwitchSensitivity.Low);
@@ -158,6 +159,7 @@ public partial class MainWindow : Window, WinTab.UI.Desktop.IApplicationUi
         DoubleClickEmptyAreaGoUpToggle.IsChecked = SettingsManager.DoubleClickEmptyAreaGoUp;
         MediaHoverPreviewToggle.IsChecked = SettingsManager.MediaHoverPreview;
         DoubleClickEmptyTabBarReopenToggle.IsChecked = SettingsManager.DoubleClickEmptyTabBarReopen;
+        NewTabDuplicateCurrentToggle.IsChecked = SettingsManager.NewTabDuplicateCurrent;
         MiddleClickForegroundToggle.IsChecked = SettingsManager.MiddleClickForegroundTab;
         WheelSwitchToggle.IsChecked = SettingsManager.WheelSwitchTab;
         var sensitivity = SettingsManager.WheelSwitchSensitivity;
@@ -249,6 +251,8 @@ public partial class MainWindow : Window, WinTab.UI.Desktop.IApplicationUi
         MediaHoverPreviewDescText.Text = UiStrings.MediaHoverPreviewDescription;
         DoubleClickEmptyTabBarReopenTitleText.Text = UiStrings.DoubleClickEmptyTabBarReopenTitle;
         DoubleClickEmptyTabBarReopenDescText.Text = UiStrings.DoubleClickEmptyTabBarReopenDescription;
+        NewTabDuplicateCurrentTitleText.Text = UiStrings.NewTabDuplicateCurrentTitle;
+        NewTabDuplicateCurrentDescText.Text = UiStrings.NewTabDuplicateCurrentDescription;
         MiddleClickTitleText.Text = UiStrings.MiddleClickTitle;
         MiddleClickDescText.Text = UiStrings.MiddleClickDescription;
         WheelSwitchTitleText.Text = UiStrings.WheelSwitchTitle;

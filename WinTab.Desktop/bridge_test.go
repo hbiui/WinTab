@@ -36,6 +36,10 @@ func TestWireState(t *testing.T) {
 		t.Fatal("double-click empty tab-bar reopen default was lost")
 		t.Fatalf("wire defaults lost: %#v", state)
 	}
+	if !state.Settings.NewTabDuplicateCurrent {
+		t.Fatal("new-tab duplicate current default was lost")
+		t.Fatalf("wire defaults lost: %#v", state)
+	}
 }
 
 func TestBridgeRoutesRepliesAndEvents(t *testing.T) {

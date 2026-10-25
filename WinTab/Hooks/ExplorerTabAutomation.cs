@@ -19,6 +19,8 @@ internal static class ExplorerTabAutomation
     private static readonly Condition CloseButtonCondition =
         new AndCondition(new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
             new PropertyCondition(AutomationElement.AutomationIdProperty, "CloseButton"));
+    private static readonly Condition StripButtonCondition =
+        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button);
 
     internal readonly record struct Tab(System.Windows.Rect Bounds, bool Selected, string Title = "", string Id = "");
 
@@ -120,6 +122,42 @@ internal static class ExplorerTabAutomation
         count = tabs.Length;
         selectedIndex = Array.FindIndex(tabs, tab => tab.Selected);
         return selectedIndex >= 0;
+    }
+
+    /// <summary>
+    /// The new-tab button beside the last tab. WinUI exposes it as "NewTabButton"; the localized
+    /// captions are the fallback. A cached rectangle lets hooks swallow a click meant for the button
+    /// instead of guessing from the last tab's edge; false means it was not found in this pass.
+    /// </summary>
+    public static bool TryReadNewTabButton(nint window, out System.Windows.Rect bounds)
+    {
+        bounds = default;
+        var tabControl = FindTabControl(window);
+        if (tabControl == null)
+            return false;
+        var cache = new CacheRequest { TreeScope = TreeScope.Element, AutomationElementMode = AutomationElementMode.None };
+        cache.Add(AutomationElement.NameProperty);
+        cache.Add(AutomationElement.AutomationIdProperty);
+        cache.Add(AutomationElement.BoundingRectangleProperty);
+        using (cache.Activate())
+        {
+            var buttons = tabControl.FindAll(TreeScope.Descendants, StripButtonCondition);
+            foreach (AutomationElement button in buttons)
+            {
+                var id = button.Cached.AutomationId;
+                var name = button.Cached.Name;
+                if (!string.Equals(id, "NewTabButton", StringComparison.OrdinalIgnoreCase) &&
+                    !name.StartsWith("新建标签页", StringComparison.Ordinal) &&
+                    !name.StartsWith("New tab", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var rectangle = button.Cached.BoundingRectangle;
+                if (rectangle.IsEmpty || rectangle.Width <= 0 || rectangle.Height <= 0)
+                    return false;
+                bounds = rectangle;
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>

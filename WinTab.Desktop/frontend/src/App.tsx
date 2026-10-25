@@ -175,6 +175,7 @@ export function App() {
               <Setting id="doubleClickEmptyAreaGoUp" title={t.doubleClickEmptyAreaGoUp} description={t.doubleClickEmptyAreaGoUpDesc} control={toggle('doubleClickEmptyAreaGoUp', t.doubleClickEmptyAreaGoUp, s.doubleClickEmptyAreaGoUp)} />
               <Setting id="mediaHoverPreview" title={t.mediaHoverPreview} description={t.mediaHoverPreviewDesc} control={toggle('mediaHoverPreview', t.mediaHoverPreview, s.mediaHoverPreview)} />
               <Setting id="doubleClickEmptyTabBarReopen" title={t.doubleClickEmptyTabBarReopen} description={t.doubleClickEmptyTabBarReopenDesc} control={toggle('doubleClickEmptyTabBarReopen', t.doubleClickEmptyTabBarReopen, s.doubleClickEmptyTabBarReopen)} />
+              <Setting id="newTabDuplicateCurrent" title={t.newTabDuplicateCurrent} description={t.newTabDuplicateCurrentDesc} control={toggle('newTabDuplicateCurrent', t.newTabDuplicateCurrent, s.newTabDuplicateCurrent)} />
               <Setting id="middleClickForegroundTab" title={t.middleClick} description={t.middleClickDesc} control={toggle('middleClickForegroundTab', t.middleClick, s.middleClickForegroundTab)} />
               <Setting id="wheelSwitchTab" title={t.wheel} description={t.wheelDesc} control={toggle('wheelSwitchTab', t.wheel, s.wheelSwitchTab)}>
                 <div className="option-line"><span className="option-label">{t.sensitivity}</span>

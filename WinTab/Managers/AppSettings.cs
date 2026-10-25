@@ -31,6 +31,8 @@ internal sealed record AppSettings
     public bool MediaHoverPreview { get; init; } = true;
     /// <summary>Double-click an empty tab-bar area to reopen the most recently closed tab.</summary>
     public bool DoubleClickEmptyTabBarReopen { get; init; } = true;
+    /// <summary>The new-tab button duplicates the active tab instead of opening the default page.</summary>
+    public bool NewTabDuplicateCurrent { get; init; } = true;
     public bool MiddleClickForegroundTab { get; init; } = true;
     public bool WheelSwitchTab { get; init; } = true;
     public string WheelSwitchSensitivity { get; init; } = "Medium";

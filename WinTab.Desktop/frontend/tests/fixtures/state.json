@@ -18,6 +18,7 @@
     "doubleClickEmptyAreaGoUp": true,
     "mediaHoverPreview": true,
     "doubleClickEmptyTabBarReopen": true,
+    "newTabDuplicateCurrent": true,
     "middleClickForegroundTab": true,
     "wheelSwitchTab": true,
     "wheelSwitchSensitivity": "Medium",

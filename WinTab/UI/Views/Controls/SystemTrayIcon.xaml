@@ -28,6 +28,7 @@
                 <MenuItem x:Name="DoubleClickEmptyAreaGoUpMenu" Header="Double-click empty space to go up" IsCheckable="True" StaysOpenOnClick="True" />
                 <MenuItem x:Name="MediaHoverPreviewMenu" Header="Hover media preview" IsCheckable="True" StaysOpenOnClick="True" />
                 <MenuItem x:Name="DoubleClickEmptyTabBarReopenMenu" Header="Double-click empty tab bar to reopen" IsCheckable="True" StaysOpenOnClick="True" />
+                <MenuItem x:Name="NewTabDuplicateCurrentMenu" Header="New tab duplicates current tab" IsCheckable="True" StaysOpenOnClick="True" />
                 <MenuItem x:Name="WheelSwitchMenu" Header="Scroll to switch tabs" IsCheckable="True" StaysOpenOnClick="True" />
                 <Separator />
                 <MenuItem x:Name="StartupMenu" Header="Start with Windows" IsCheckable="True" StaysOpenOnClick="True" />

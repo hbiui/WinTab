@@ -145,6 +145,19 @@ test('tab-bar reopen double-click is independent and defaults on', async ({ page
     call.args[0] === 'doubleClickEmptyTabBarReopen' && call.args[1] === false)).toBe(true)
 })
 
+test('new-tab duplicate current is independent and defaults on', async ({ page }) => {
+  await open(page)
+  const title = copies['zh-CN'].newTabDuplicateCurrent
+  const toggle = page.getByRole('switch', { name: title, exact: true })
+  await expect(toggle).toBeChecked()
+  await toggle.click()
+  await expect(toggle).not.toBeChecked()
+  await expect(page.getByRole('switch', { name: copies['zh-CN'].doubleClickEmptyTabBarReopen, exact: true })).toBeChecked()
+  const calls = await page.evaluate(() => (window as any).__calls)
+  expect(calls.some((call: any) => call.method === 'Desktop.Set' &&
+    call.args[0] === 'newTabDuplicateCurrent' && call.args[1] === false)).toBe(true)
+})
+
 test('physical capture, manual text and drafts survive unrelated updates', async ({ page }) => {
   await open(page)
   const group = page.getByRole('textbox', { name: '标签组恢复快捷键', exact: true })
